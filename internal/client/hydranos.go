@@ -224,6 +224,9 @@ type hRow struct {
 	UserPaused bool    `json:"user_paused"`
 	MultiFile  bool    `json:"multi_file"`
 	Agent      string  `json:"agent"`
+	Category   string  `json:"category"`
+	// Tags : null pour un torrent sans étiquette.
+	Tags []string `json:"tags"`
 	// ContentPath : le dossier commun des fichiers (celui du renommage), quand
 	// Hydranos le donne.
 	ContentPath string `json:"content_path"`
@@ -258,6 +261,9 @@ func (r hRow) torrent() Torrent {
 		Checking:    r.State == "checking_files" || r.State == "checking",
 		Downloading: !stopped && r.Progress < 1 && (r.State == "downloading" || r.State == "queued"),
 		Stopped:     stopped,
+		Category:    r.Category,
+		Tags:        tagList(r.Tags),
+		SavePath:    dir,
 	}
 	if r.Tracker != "" {
 		t.Trackers = []string{strings.ToLower(r.Tracker)}

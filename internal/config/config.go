@@ -108,7 +108,8 @@ type ClientConfig struct {
 	ID string `json:"id"`
 	// Name : le nom choisi par le membre (« Seedbox », « PC »).
 	Name string `json:"name,omitempty"`
-	// Kind : qbittorrent (défaut), transmission, deluge, rtorrent.
+	// Kind : qbittorrent (défaut), transmission, deluge, rtorrent, hydranos
+	// (sa clé API est rangée dans Pass).
 	Kind     string `json:"kind,omitempty"`
 	URL      string `json:"url"`
 	User     string `json:"user,omitempty"`
