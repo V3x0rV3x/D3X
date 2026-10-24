@@ -1,5 +1,5 @@
 // Package client donne une seule interface aux clients torrent pris en charge
-// (qBittorrent, Transmission, Deluge, rTorrent). Le cross-seed et la
+// (qBittorrent, Transmission, Deluge, rTorrent, Hydranos). Le cross-seed et la
 // publication ne parlent qu'à elle.
 //
 // Règles communes, quel que soit le client : un ajout se fait TOUJOURS à
@@ -87,7 +87,7 @@ var (
 )
 
 // Kinds : les clients pris en charge, pour les réglages.
-var Kinds = []string{"qbittorrent", "transmission", "deluge", "rtorrent"}
+var Kinds = []string{"qbittorrent", "transmission", "deluge", "rtorrent", "hydranos"}
 
 // KindName : le nom affiché d'un type de client (vide = qBittorrent), vide
 // s'il est inconnu.
@@ -101,6 +101,8 @@ func KindName(kind string) string {
 		return "Deluge"
 	case "rtorrent":
 		return "rTorrent"
+	case "hydranos":
+		return "Hydranos"
 	}
 	return ""
 }
@@ -110,7 +112,7 @@ type Options struct {
 	Kind     string
 	URL      string
 	User     string
-	Pass     string
+	Pass     string // Hydranos : sa clé API
 	Insecure bool
 }
 
@@ -125,6 +127,8 @@ func New(o Options) (Client, error) {
 		return newDeluge(o)
 	case "rtorrent":
 		return newRTorrent(o)
+	case "hydranos":
+		return newHydranos(o)
 	}
 	return nil, fmt.Errorf("client inconnu : %s", o.Kind)
 }
