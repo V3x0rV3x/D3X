@@ -14,7 +14,7 @@ L'outil de bureau des membres de [V3X](https://v3x.club).
 - **Livres** : dans Ebook (ou pour une release faite de .epub, .pdf…), le lien Open Library du livre ou son ISBN remplit titre, auteur, couverture et fiche livre, comme sur la page d'upload. Il est facultatif : un livre introuvable (sortie récente, petite édition) se publie sans, en choisissant soi-même la sous-catégorie.
 - **Lot** : un dossier entier passé au crible. D3X ne publie seul que ce qui est sûr ; le reste attend ta revue.
 
-Clients pris en charge : **qBittorrent**, **Transmission**, **Deluge** et **rTorrent** (ruTorrent), sur ce PC, un NAS ou une seedbox, et [plusieurs à la fois](#plusieurs-clients) (une seedbox et ce PC, par exemple).
+Clients pris en charge : **qBittorrent**, **Transmission**, **Deluge**, **rTorrent** (ruTorrent) et **Hydranos**, sur ce PC, un NAS ou une seedbox, et [plusieurs à la fois](#plusieurs-clients) (une seedbox et ce PC, par exemple).
 
 ## Ce que fait D3X, et ce qu'il ne fait jamais
 
@@ -253,6 +253,7 @@ Chaque version publie `checksums.txt` (l'empreinte SHA-256 de chaque fichier) et
 | Transmission | `http://127.0.0.1:9091` | Préférences ▸ Distant |
 | Deluge | `http://127.0.0.1:8112` | greffon WebUI (mot de passe seul) |
 | rTorrent | `https://ta-seedbox/RPC2` | XML-RPC, avec l'identification de la seedbox |
+| Hydranos | `http://127.0.0.1:8199` | sa clé API dans le champ « Clé API » (pas d'utilisateur) ; Hydranos 4.8.1 ou plus requis |
 
 Seedbox qui demande d'abord une identification du serveur (une fenêtre « identifiez-vous » avant même qBittorrent) : D3X y présente le pseudo et le mot de passe des champs du client. Inutile de les écrire dans l'adresse.
 

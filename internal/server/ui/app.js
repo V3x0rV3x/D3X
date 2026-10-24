@@ -601,10 +601,12 @@ function clientBody(c, i, single) {
   });
   const user = input(id("user"), c.user, "", (v) => { c.user = v; c.test = null; });
   const pass = input(id("pass"), "", c.hasPass ? "Enregistré (laisse vide pour le garder)" : "", (v) => { c.pass = v; c.test = null; }, "password");
+  const passLabel = labelFor(id("pass"), "Mot de passe");
   const kindHint = () => {
     const k = KINDS[c.kind] || KINDS.qbittorrent;
     url.placeholder = k.url;
     hint.textContent = k.help + (ui.state && ui.state.mode === "docker" ? " Dans Docker, mets l'adresse du conteneur du client (http://qbittorrent:8080) ou celle de la machine, jamais 127.0.0.1." : "");
+    passLabel.textContent = k.passLabel || "Mot de passe";
     user.disabled = !k.user;
     if (!k.user) { user.value = ""; c.user = ""; }
   };
@@ -621,7 +623,7 @@ function clientBody(c, i, single) {
   const u = el("div");
   u.append(labelFor(id("user"), "Utilisateur"), user);
   const pw = el("div");
-  pw.append(labelFor(id("pass"), "Mot de passe"), pass);
+  pw.append(passLabel, pass);
   two.append(u, pw);
   const ins = el("label", "check");
   const cb = el("input");
@@ -915,6 +917,7 @@ const KINDS = {
   transmission: { name: "Transmission", url: "http://127.0.0.1:9091", user: true, help: "Préférences ▸ Distant : autorise l'accès distant. Utilisateur et mot de passe seulement si tu les as activés." },
   deluge: { name: "Deluge", url: "http://127.0.0.1:8112", user: false, help: "L'interface web de Deluge (greffon WebUI) : seul son mot de passe est demandé, pas d'utilisateur." },
   rtorrent: { name: "rTorrent", label: "rTorrent / ruTorrent", url: "https://ta-seedbox/RPC2", user: true, help: "L'adresse XML-RPC de rTorrent (souvent /RPC2), avec l'identification de ta seedbox. ruTorrent n'est pas nécessaire." },
+  hydranos: { name: "Hydranos", url: "http://127.0.0.1:8199", user: false, passLabel: "Clé API", help: "L'adresse d'Hydranos (port 8199 par défaut) et sa clé API, celle du fichier de réglages ([daemon] api_key), dans « Clé API » : pas d'utilisateur. Hydranos 4.8.1 ou plus requis." },
 };
 
 async function detectClients() {
