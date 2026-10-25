@@ -10,12 +10,11 @@ const lot = {
   entries: [], // { name, path, size, files, video, exec, flat, error, last, state, detail, checked }
   tab: "pending",
   running: false,
-  stop: false,
   current: "",
-  published: 0,
   done: 0,
   total: 0,
   seen: "", // dernier état du lot de D3X vu par cette page
+  gen: 0, // un par lot lancé d'ici : écarte un suivi parti avant
   poll: null,
 };
 
@@ -291,13 +290,13 @@ function lotProgress(label, detail) {
   $("#b-progress-fill").style.width = (lot.total ? Math.max(3, (lot.done / lot.total) * 100) : 0) + "%";
 }
 
-async function decide(e, state, detail, id) {
+async function decide(e, state, detail) {
   e.state = state;
   e.detail = detail || "";
   e.checked = state === "review" || state === "simulated";
   const kind = { review: "batch_review", simulated: "batch_simulated", duplicate: "batch_duplicate", ignored: "batch_ignored", error: "batch_error" }[state];
   if (kind) {
-    try { await api("/ui/batch/decision", { path: e.path, source: lot.source, name: e.name, kind, detail: e.detail, id: id || "" }); } catch (err) { /* le lot continue */ }
+    try { await api("/ui/batch/decision", { path: e.path, source: lot.source, name: e.name, kind, detail: e.detail }); } catch (err) { /* rien */ }
   }
   lotRender();
 }
@@ -355,6 +354,9 @@ async function lotRun() {
   if (!todo.length) return;
   try {
     const run = await api("/ui/batch/start", { path: lot.dir, source: lot.source, paths: todo.map((e) => e.path), options: lotOptions() });
+    // Un suivi parti avant le départ rapporterait le lot d'avant (fini) : sa
+    // réponse est ignorée.
+    lot.gen++;
     lot.seen = "";
     lot.tab = "pending";
     applyRun(run);
@@ -377,8 +379,19 @@ async function lotStop() {
 // rouverte sans liste reprend le dossier du lot ; une liste déjà préparée (ou
 // choisie dans Cross-seed) est gardée, le lot n'y met que ses états.
 function applyRun(run) {
-  if (!run) return;
+  if (!run) {
+    // D3X redémarré en plein lot : plus rien ne tourne, la page rend la main.
+    if (lot.running) {
+      lot.running = false;
+      lot.current = "";
+      lotRender();
+      lotProgress("", "");
+    }
+    return;
+  }
   const active = run.state === "running" || run.state === "paused" || run.state === "stopping";
+  const ending = !!lot.seen && lot.seen !== "done" && run.state === "done";
+  let adopted = false;
   if (active && lot.dir !== run.dir && !lot.picked) {
     lot.dir = run.dir;
     lot.source = run.source;
@@ -386,42 +399,52 @@ function applyRun(run) {
     $("#b-fs").classList.add("hidden");
     lot.entries = lotEntries(run.entries);
     window.lotSources();
+    adopted = true;
   }
-  const byPath = new Map(lot.entries.map((e) => [e.path, e]));
-  for (const re of run.entries) {
-    let e = byPath.get(re.path);
-    if (!e) {
-      e = lotEntries([re])[0];
-      lot.entries.push(e);
+  // Les états du lot ne s'appliquent que pendant qu'il tourne, et une fois à
+  // sa fin : ensuite la liste est à l'utilisateur (cases décochées, Ignorer,
+  // remise en attente, autre dossier listé), le suivi ne la réécrit plus.
+  if (active || ending) {
+    // Les releases du lot inconnues de la page n'y entrent que si la liste
+    // est celle du lot ; une liste choisie dans Cross-seed ou un autre
+    // dossier ne reçoit rien d'étranger.
+    const ours = adopted || (run.dir === lot.dir && !lot.picked);
+    const byPath = new Map(lot.entries.map((e) => [e.path, e]));
+    for (const re of run.entries) {
+      let e = byPath.get(re.path);
+      if (!e) {
+        if (!ours) continue;
+        e = lotEntries([re])[0];
+        lot.entries.push(e);
+      }
+      e.state = re.state;
+      e.detail = re.detail || "";
+      e.job = re.job || e.job;
+      e.last = re.last || e.last;
+      e.active = !!re.active;
+      if (re.requests) e.requests = re.requests;
+      if (active) e.checked = false;
+      else e.checked = re.state === "review" || re.state === "simulated";
     }
-    e.state = re.state;
-    e.detail = re.detail || "";
-    e.job = re.job || e.job;
-    e.last = re.last || e.last;
-    e.active = !!re.active;
-    if (re.requests) e.requests = re.requests;
-    if (active) e.checked = false;
-    else e.checked = re.state === "review" || re.state === "simulated";
   }
   lot.running = active;
-  lot.stop = run.state === "stopping";
   lot.current = run.current || "";
   lot.done = run.done;
   lot.total = run.total;
-  lot.published = run.published;
-  lot.publishedBytes = run.publishedBytes;
   lotRender();
-  lotProgress(run.label, run.state === "paused" ? "MediaInfo en cours dans cette page…" : run.detail);
+  lotProgress(run.label, run.state === "paused" ? "MediaInfo en cours dans une page de D3X…" : run.detail);
   if (run.mediainfoWanted) lotServeMediaInfo(run.mediainfoWanted);
   // Fin du lot vue par cette page : le bilan, une fois. Une page ouverte sur
   // un lot déjà fini (lot.seen vide) n'en refait pas.
-  if (lot.seen && lot.seen !== "done" && run.state === "done") {
+  if (ending) {
     const counts = {};
     for (const e of lot.entries) counts[e.state] = (counts[e.state] || 0) + 1;
     lot.tab = run.options.sim ? "simulated" : counts.published ? "published" : "review";
     lotRender();
-    const started = run.options.seedLater && !run.options.sim && run.published ? " Leurs seeds démarrent maintenant." : "";
-    toast((run.stopped ? "Lot arrêté." : "Lot terminé : " + (run.options.sim ? (counts.simulated || 0) + " seraient publiées" : run.published + " publiées") + ", " + (counts.review || 0) + " à vérifier.") + started, "ok");
+    const sim = counts.simulated || 0;
+    const done = run.options.sim ? sim + " " + plural(sim, "serait publiée", "seraient publiées") : run.published + " " + plural(run.published, "publiée", "publiées");
+    const started = run.options.seedLater && !run.options.sim && run.published > 0 ? " Leurs seeds démarrent maintenant." : "";
+    toast((run.stopped ? "Lot arrêté." : "Lot terminé : " + done + ", " + (counts.review || 0) + " à vérifier.") + started, "ok");
   }
   lot.seen = run.state;
 }
@@ -432,8 +455,11 @@ function applyRun(run) {
 async function lotPoll() {
   clearTimeout(lot.poll);
   lot.poll = null;
+  const gen = lot.gen;
   try {
-    applyRun(await api("/ui/batch/state"));
+    const run = await api("/ui/batch/state");
+    if (gen !== lot.gen) return; // un lot vient de partir : son suivi a pris le relais
+    applyRun(run);
   } catch (e) {
     if (e.message === "session") return;
   }
@@ -449,14 +475,19 @@ function lotPollSoon(ms) {
 
 // MediaInfo demandé par D3X : une seule fois par publication, par cette page.
 // Illisible, la réponse vide part quand même : D3X range la release « à
-// vérifier » au lieu d'attendre.
+// vérifier » au lieu d'attendre. Si l'envoi échoue (réseau), il est retenté
+// au suivi suivant ; un refus (une autre page a répondu, lot arrêté) est final.
 const miServed = new Set();
 async function lotServeMediaInfo(req) {
   if (!req || miServed.has(req.jobId) || !window.mediaInfoRead) return;
   miServed.add(req.jobId);
   let text = "";
   try { text = await window.mediaInfoRead(req.jobId, req.fileIndex, req.size); } catch (e) { text = ""; }
-  try { await api("/ui/pub/" + req.jobId + "/mediainfo", { text }); } catch (e) { /* une autre page a répondu, ou le lot est arrêté */ }
+  try {
+    await api("/ui/pub/" + req.jobId + "/mediainfo", { text });
+  } catch (e) {
+    if (e.message !== "aucun MediaInfo attendu pour cette publication" && e.message !== "session") miServed.delete(req.jobId);
+  }
 }
 window.lotServeMediaInfo = lotServeMediaInfo;
 

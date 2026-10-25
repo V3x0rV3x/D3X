@@ -662,22 +662,12 @@ let miFactory = null;
 // Renvoie "" s'il n'y a pas de vidéo.
 async function mediaInfoOf(j) {
   if (j.mainFile < 0) return "";
-  if (!miFactory) {
-    miFactory = await window.MediaInfo.mediaInfoFactory({ format: "text", locateFile: () => "/vendor/mediainfo/MediaInfoModule.wasm" });
-  }
-  const file = j.files[j.mainFile];
-  const read = async (size, offset) => {
-    const r = await fetch("/ui/pub/" + j.id + "/file/" + j.mainFile + "?offset=" + offset + "&size=" + size);
-    if (!r.ok) throw new Error("lecture " + r.status);
-    return new Uint8Array(await r.arrayBuffer());
-  };
-  const text = await miFactory.analyzeData(() => file.size, read);
-  return String(text || "").trim();
+  return window.mediaInfoRead(j.id, j.mainFile, j.files[j.mainFile].size);
 }
 
-// MediaInfo demandé par le lot (qui tourne dans D3X) : lu par morceaux comme
-// pour Publier, et rendu au serveur. Sans binaire mediainfo côté D3X, c'est
-// la page ouverte qui le calcule.
+// MediaInfo d'un fichier d'une tâche, lu par morceaux via D3X. Sert à Publier
+// et au lot (qui tourne dans D3X) : sans binaire mediainfo côté D3X, c'est la
+// page ouverte qui le calcule et le lui rend.
 window.mediaInfoRead = async (jobId, index, size) => {
   if (!miFactory) {
     miFactory = await window.MediaInfo.mediaInfoFactory({ format: "text", locateFile: () => "/vendor/mediainfo/MediaInfoModule.wasm" });
