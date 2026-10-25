@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -238,33 +237,6 @@ func (e *Engine) loop(ctx context.Context, r *Run, src source.Source) {
 			}
 		}
 		r.State, r.Current, r.Label, r.Detail, r.EndedAt = StDone, "", "", "", time.Now()
+		e.cancel() // plus rien n'attend sur le contexte du lot
 	})
 }
-
-// provisoire : remplacé par process.go (tâche 7)
-// process : décisions qui ne demandent rien à V3X. Le reste arrive à la tâche 7.
-func (e *Engine) process(ctx context.Context, r *Run, src source.Source, en *Entry) {
-	o := r.Options
-	switch {
-	case en.State == "ready":
-		e.decide(src, en, "review", "pas encore porté", "")
-	case en.Exec:
-		e.decide(src, en, "review", "contient un exécutable : jamais publié par un lot", "")
-	case o.Video && !en.Video && !en.Audio:
-		e.decide(src, en, "review", "ni vidéo ni album (option « Vidéos et albums seulement »)", "")
-	case o.Cap > 0 && float64(en.Size) > o.Cap*gib:
-		e.decide(src, en, "review", "au-delà du plafond de "+fmtNum(o.Cap)+" Gio : pas hachée", "")
-	case en.Flat:
-		e.decide(src, en, "review", "dossier sans fichier à sa racine (collection, plusieurs releases ?)", "")
-	default:
-		e.decide(src, en, "review", "pas encore porté", "")
-	}
-}
-
-// provisoire : remplacé par process.go (tâche 7)
-func (e *Engine) waitChecked(r *Run, en *Entry) {}
-
-// provisoire : remplacé par process.go (tâche 7)
-const held = "vérifiée à 100 %, démarre à la fin du lot"
-
-func replaceHeld(s string) string { return strings.ReplaceAll(s, held, "seed lancé à la fin du lot") }
