@@ -3,6 +3,7 @@ package mediainfo
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 )
 
@@ -58,10 +59,10 @@ func (p *Page) Analyze(ctx context.Context, req Request) (string, error) {
 		return text, nil
 	case <-ctx.Done():
 		p.mu.Lock()
-		if p.req != nil && p.req.JobID == req.JobID {
+		if p.done == done {
 			p.req, p.done = nil, nil
 		}
 		p.mu.Unlock()
-		return "", ctx.Err()
+		return "", fmt.Errorf("mediainfo : lot arrêté : %w", ctx.Err())
 	}
 }

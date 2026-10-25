@@ -2,6 +2,7 @@ package mediainfo
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -43,9 +44,15 @@ func TestPageDeliver(t *testing.T) {
 func TestPageCancelled(t *testing.T) {
 	p := NewPage()
 	ctx, cancel := context.WithCancel(context.Background())
-	go func() { time.Sleep(20 * time.Millisecond); cancel() }()
-	if _, err := p.Analyze(ctx, Request{JobID: "j2", Source: "local"}); err == nil {
-		t.Fatal("annulation : erreur attendue")
+	go func() {
+		deadline := time.Now().Add(2 * time.Second)
+		for p.Pending() == nil && time.Now().Before(deadline) {
+			time.Sleep(time.Millisecond)
+		}
+		cancel()
+	}()
+	if _, err := p.Analyze(ctx, Request{JobID: "j2", Source: "local"}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("annulation : context.Canceled attendu, reçu %v", err)
 	}
 	if p.Pending() != nil {
 		t.Fatal("demande à retirer après annulation")
@@ -64,5 +71,50 @@ func TestChooser(t *testing.T) {
 	c.Exec = nil
 	if c.For(Request{Source: "local"}) != page {
 		t.Fatal("sans binaire : page attendue")
+	}
+}
+
+func TestPageSecondAnalyze(t *testing.T) {
+	p := NewPage()
+	done := make(chan string, 1)
+	go func() {
+		out, _ := p.Analyze(context.Background(), Request{JobID: "a", Source: "local"})
+		done <- out
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for p.Pending() == nil && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if _, err := p.Analyze(context.Background(), Request{JobID: "b", Source: "local"}); err == nil {
+		t.Fatal("seconde demande : erreur attendue")
+	}
+	if r := p.Pending(); r == nil || r.JobID != "a" {
+		t.Fatalf("la première demande doit rester en attente : %+v", r)
+	}
+	if !p.Deliver("a", "ok") {
+		t.Fatal("réponse refusée")
+	}
+	if got := <-done; got != "ok" {
+		t.Fatalf("résultat : %q", got)
+	}
+}
+
+func TestPageDeliverTwice(t *testing.T) {
+	p := NewPage()
+	done := make(chan struct{})
+	go func() {
+		p.Analyze(context.Background(), Request{JobID: "a", Source: "local"})
+		close(done)
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for p.Pending() == nil && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !p.Deliver("a", "x") {
+		t.Fatal("première réponse refusée")
+	}
+	<-done
+	if p.Deliver("a", "x") {
+		t.Fatal("seconde réponse : refus attendu")
 	}
 }

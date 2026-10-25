@@ -23,7 +23,7 @@ func fakeBinary(t *testing.T, script string) string {
 }
 
 func TestExecStripsPath(t *testing.T) {
-	bin := fakeBinary(t, `printf 'General\nComplete name                            : %s\nFormat : Matroska\n\nVideo\nWidth : 1920 pixels\n' "$2"`)
+	bin := fakeBinary(t, `printf 'General\nComplete name                            : %s\nFormat : Matroska\n\nVideo\nWidth : 1920 pixels\n' "$1"`)
 	e := &Exec{Path: bin}
 	out, err := e.Analyze(context.Background(), Request{Source: "local", Path: "/data/Film.mkv"})
 	if err != nil {

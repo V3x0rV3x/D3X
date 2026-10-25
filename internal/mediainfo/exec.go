@@ -17,7 +17,8 @@ type Exec struct {
 	Path string
 }
 
-// Find : le binaire, nil s'il n'y en a pas.
+// Find : le binaire, nil s'il n'y en a pas. Un D3X_MEDIAINFO qui désigne un
+// fichier absent désactive le binaire au lieu de retomber sur le PATH.
 func Find() *Exec {
 	if p := strings.TrimSpace(os.Getenv("D3X_MEDIAINFO")); p != "" {
 		if _, err := os.Stat(p); err == nil {
@@ -44,12 +45,19 @@ func (e *Exec) Analyze(ctx context.Context, req Request) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, e.Path, "--", req.Path)
+	cmd := exec.CommandContext(ctx, e.Path, req.Path)
 	cmd.Env = append(os.Environ(), "LANG=C", "LC_ALL=C")
+	cmd.WaitDelay = 5 * time.Second
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return "", errors.New("mediainfo : délai dépassé")
+		}
 		msg := strings.TrimSpace(errb.String())
+		if len(msg) > 500 {
+			msg = msg[:500]
+		}
 		if msg == "" {
 			msg = err.Error()
 		}
