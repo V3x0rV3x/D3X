@@ -601,12 +601,12 @@ type lotSummary struct {
 }
 
 func (s *Server) lotSummary() *lotSummary {
-	r := s.lot.State()
-	if r == nil {
+	state, ok := s.lot.Summary()
+	if !ok {
 		return nil
 	}
-	out := &lotSummary{State: r.State}
-	if r.State == batch.StRunning {
+	out := &lotSummary{State: state}
+	if state == batch.StRunning {
 		if p := s.miPage.Pending(); p != nil {
 			out.State, out.MediaInfoWanted = "paused", p
 		}

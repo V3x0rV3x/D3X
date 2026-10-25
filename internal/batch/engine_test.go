@@ -252,7 +252,7 @@ func TestEngineOneAtATime(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Le second démarrage pendant le premier est refusé (ou le premier a déjà fini : alors accepté).
-	if _, err := e.Start(Spec{Dir: "/r", Source: "local", Paths: []string{"/r/A"}}); err != nil && err.Error() != "un lot tourne déjà" {
+	if _, err := e.Start(Spec{Dir: "/r", Source: "local", Paths: []string{"/r/A"}}); err != nil && !errors.Is(err, ErrRunning) {
 		t.Fatalf("erreur inattendue : %v", err)
 	}
 	waitDone(t, e)

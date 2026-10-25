@@ -69,7 +69,10 @@ var ErrStopped = errors.New("lot arrêté")
 var stateOfKind = map[string]string{"published": "published", "batch_ready": "ready", "batch_review": "review", "batch_simulated": "simulated", "batch_duplicate": "duplicate", "batch_ignored": "ignored", "batch_error": "error"}
 var kindOfState = map[string]string{"review": "batch_review", "simulated": "batch_simulated", "duplicate": "batch_duplicate", "ignored": "batch_ignored", "error": "batch_error"}
 
-// Start démarre un lot. Erreur si un lot tourne déjà.
+// ErrRunning : un lot tourne déjà (ou s'arrête), un second est refusé.
+var ErrRunning = errors.New("un lot tourne déjà")
+
+// Start démarre un lot. ErrRunning si un lot tourne déjà.
 func (e *Engine) Start(spec Spec) (*Run, error) {
 	src, err := e.deps.Source(spec.Source)
 	if err != nil {
@@ -100,7 +103,7 @@ func (e *Engine) Start(spec Spec) (*Run, error) {
 	e.mu.Lock()
 	if e.run != nil && e.run.State != StDone {
 		e.mu.Unlock()
-		return nil, errors.New("un lot tourne déjà")
+		return nil, ErrRunning
 	}
 	for _, en := range r.Entries {
 		if todo(en) {
@@ -144,6 +147,17 @@ func (e *Engine) Running() bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.run != nil && e.run.State != StDone
+}
+
+// Summary : l'état du lot en cours ou du dernier fini, sans copier ses
+// entrées ; ok faux s'il n'y en a jamais eu.
+func (e *Engine) Summary() (state string, ok bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.run == nil {
+		return "", false
+	}
+	return e.run.State, true
 }
 
 // State : une copie du lot (en cours ou le dernier fini), nil s'il n'y en a jamais eu.

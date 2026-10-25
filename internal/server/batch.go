@@ -39,6 +39,12 @@ func (s *Server) routesBatch() {
 // batchStart démarre le lot dans D3X : la page envoie les releases cochées
 // et les options, puis suit l'état. Un seul lot à la fois.
 func (s *Server) batchStart(w http.ResponseWriter, r *http.Request) {
+	// Refusé tout de suite : pas de liste des releases (jusqu'à 5 min par
+	// SSH) pour rien. Le moteur revérifie au démarrage.
+	if s.lot.Running() {
+		fail(w, http.StatusConflict, batch.ErrRunning)
+		return
+	}
 	var spec batch.Spec
 	if !decode(w, r, 4<<20, &spec) {
 		return
@@ -53,7 +59,7 @@ func (s *Server) batchStart(w http.ResponseWriter, r *http.Request) {
 	}
 	run, err := s.lot.Start(spec)
 	if err != nil {
-		if err.Error() == "un lot tourne déjà" {
+		if errors.Is(err, batch.ErrRunning) {
 			fail(w, http.StatusConflict, err)
 		} else {
 			fail(w, http.StatusBadRequest, err)

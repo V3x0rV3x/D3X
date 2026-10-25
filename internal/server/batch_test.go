@@ -71,6 +71,17 @@ func TestLotServerSide(t *testing.T) {
 				t.Fatalf("une demande attend mais le lot n'est pas en pause : %v", st["state"])
 			}
 			paused = true
+			if s.LotAdvancing() {
+				t.Fatal("lot en pause sur le MediaInfo : LotAdvancing doit être faux")
+			}
+			// Le hachage continue pendant la pause (vrai travail) ; une fois
+			// fini, le lot en pause n'occupe pas D3X.
+			for k := 0; k < 200 && s.pub.Busy(); k++ {
+				time.Sleep(25 * time.Millisecond)
+			}
+			if s.Busy() {
+				t.Fatal("lot en pause sur le MediaInfo, hachage fini : Busy doit être faux")
+			}
 			// Toute page la voit aussi dans /ui/status, à côté de l'analyse.
 			if _, sst, _ := call(t, s, "GET", "/ui/status", nil); sst["lot"] != nil {
 				lot := sst["lot"].(map[string]interface{})
