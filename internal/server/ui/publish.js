@@ -1628,3 +1628,7 @@ function bindPublish() {
 }
 
 bindPublish();
+
+// Les séries mémorisées, dès le chargement (publish.js est chargé après app.js :
+// l'appel ne peut pas être dans boot(), qui tourne avant que loadSeries existe).
+loadSeries();

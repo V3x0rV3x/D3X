@@ -1707,7 +1707,6 @@ function presence() {
 
 async function boot() {
   presence();
-  loadSeries();
   for (const b of document.querySelectorAll("[data-open-settings]")) b.addEventListener("click", openSettings);
   for (const b of document.querySelectorAll(".view")) b.addEventListener("click", () => setView(b.dataset.view));
   window.addEventListener("popstate", () => setView(viewFromHash() || "cross", true));
