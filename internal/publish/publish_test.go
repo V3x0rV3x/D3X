@@ -19,6 +19,7 @@ import (
 	"github.com/V3x0rV3x/D3X/internal/client"
 	"github.com/V3x0rV3x/D3X/internal/config"
 	"github.com/V3x0rV3x/D3X/internal/crossseed"
+	"github.com/V3x0rV3x/D3X/internal/maketorrent"
 	"github.com/V3x0rV3x/D3X/internal/pathmap"
 	"github.com/V3x0rV3x/D3X/internal/qbit"
 	"github.com/V3x0rV3x/D3X/internal/source"
@@ -351,5 +352,19 @@ func TestPrivateFolders(t *testing.T) {
 		if err := private(source.Local{}, p); err != nil {
 			t.Errorf("%s refusé : %v", p, err)
 		}
+	}
+}
+
+func TestFilePath(t *testing.T) {
+	m := New(nil, nil, "test")
+	m.jobs["j"] = &Job{ID: "j", plan: &maketorrent.Plan{Files: []maketorrent.Entry{{Rel: "a.mkv", Abs: "/x/a.mkv", Size: 3}}}}
+	if p, ok := m.FilePath("j", 0); !ok || p != "/x/a.mkv" {
+		t.Fatalf("%q %v", p, ok)
+	}
+	if _, ok := m.FilePath("j", 1); ok {
+		t.Fatal("index hors limites")
+	}
+	if _, ok := m.FilePath("inconnu", 0); ok {
+		t.Fatal("job inconnu")
 	}
 }

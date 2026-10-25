@@ -275,6 +275,18 @@ func (m *Manager) ReadFile(ctx context.Context, id string, index int, off, n int
 	return b, f.Size, err
 }
 
+// FilePath : le chemin réel d'un fichier de la release (MediaInfo calculé
+// par le binaire, sur ce PC). Faux si la publication ou l'index est inconnu.
+func (m *Manager) FilePath(id string, index int) (string, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	j := m.jobs[id]
+	if j == nil || j.plan == nil || index < 0 || index >= len(j.plan.Files) {
+		return "", false
+	}
+	return j.plan.Files[index].Abs, true
+}
+
 // Download renvoie les informations de la release pour la fiche.
 func (m *Manager) Download(id string) (v3x.FicheDownload, bool) {
 	m.mu.Lock()
