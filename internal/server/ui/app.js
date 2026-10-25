@@ -847,7 +847,7 @@ async function saveSettings(ev) {
 
 // Aide propre à chaque client.
 const KINDS = {
-  qbittorrent: { name: "qBittorrent", url: "http://127.0.0.1:8080", user: true, help: "Outils ▸ Options ▸ Interface Web : coche « Interface Web », note le port, l'utilisateur et le mot de passe. Version 4.5 ou plus." },
+  qbittorrent: { name: "qBittorrent", url: "http://127.0.0.1:8080", user: true, help: "Outils ▸ Options ▸ Interface Web : coche « Interface Web » et note le port. Plus bas, dans « Authentification », choisis un nom d'utilisateur et un mot de passe puis enregistre (qBittorrent n'en propose pas d'office depuis sa version 4.6) : ce sont eux que tu saisis ici. Version 4.5 ou plus." },
   transmission: { name: "Transmission", url: "http://127.0.0.1:9091", user: true, help: "Préférences ▸ Distant : autorise l'accès distant. Utilisateur et mot de passe seulement si tu les as activés." },
   deluge: { name: "Deluge", url: "http://127.0.0.1:8112", user: false, help: "L'interface web de Deluge (greffon WebUI) : seul son mot de passe est demandé, pas d'utilisateur." },
   rtorrent: { name: "rTorrent", label: "rTorrent / ruTorrent", url: "https://ta-seedbox/RPC2", user: true, help: "L'adresse XML-RPC de rTorrent (souvent /RPC2), avec l'identification de ta seedbox. ruTorrent n'est pas nécessaire." },

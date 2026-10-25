@@ -225,7 +225,7 @@ Chaque version publie `checksums.txt` (l'empreinte SHA-256 de chaque fichier) et
 
 | Client | Adresse habituelle | À activer |
 | --- | --- | --- |
-| qBittorrent (4.5+) | `http://127.0.0.1:8080` | Outils ▸ Options ▸ Interface Web |
+| qBittorrent (4.5+) | `http://127.0.0.1:8080` | Outils ▸ Options ▸ Interface Web, puis un nom d'utilisateur et un mot de passe dans « Authentification » (à créer : aucun d'office depuis la 4.6) |
 | Transmission | `http://127.0.0.1:9091` | Préférences ▸ Distant |
 | Deluge | `http://127.0.0.1:8112` | greffon WebUI (mot de passe seul) |
 | rTorrent | `https://ta-seedbox/RPC2` | XML-RPC, avec l'identification de la seedbox |

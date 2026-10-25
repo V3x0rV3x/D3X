@@ -555,7 +555,39 @@ func waitFor(t *testing.T, ok func() bool) {
 func TestMain(m *testing.M) {
 	watchEvery, downloadGap = 20*time.Millisecond, 0
 	recheckGap, endStable, missGrace = 100*time.Millisecond, 60*time.Millisecond, 150*time.Millisecond
+	failedEvery = 30 * time.Millisecond
 	os.Exit(m.Run())
+}
+
+// Ajout laissé à l'arrêt puis retiré du client à la main : la ligne passe
+// d'elle-même en « Retiré » au lieu de rester en erreur (Bobobobobo123,
+// 25/10/26).
+func TestFailedRemovedByHand(t *testing.T) {
+	isolatedConfig(t)
+	fq := &fakeQbit{list: map[string]*fakeTorrent{}, complete: map[string]float64{}}
+	qs := httptest.NewServer(fq.handler(t))
+	defer qs.Close()
+	q, _ := client.New(client.Options{URL: qs.URL, User: "admin", Pass: "secret"})
+	v := v3x.New(qs.URL, "cle", "D3X/test")
+	e := New(oneClient(q, v, config.Defaults()))
+
+	const h = "0123456789abcdef0123456789abcdef01234567"
+	e.mu.Lock()
+	e.rows["k1"] = &Row{Key: "k1", Name: "Release.X", Status: StFailed}
+	e.watches[h] = &watch{Key: "k1", Name: "Release.X", Client: "c1", Status: StFailed, Detail: "vérifié à 40 %"}
+	e.mu.Unlock()
+
+	waitFor(t, func() bool {
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		return e.rows["k1"].Status == StRemoved
+	})
+	e.mu.Lock()
+	_, still := e.watches[h]
+	e.mu.Unlock()
+	if still {
+		t.Fatal("l'ajout retiré reste surveillé")
+	}
 }
 
 // isolatedConfig : dossier de réglages propre au test. Le moteur continue

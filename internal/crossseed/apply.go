@@ -204,13 +204,21 @@ func saveDir(contentPath, rel string) (string, bool) {
 // ---------- surveillance des vérifications ----------
 
 func (e *Engine) watchLoop() {
+	var failedAt time.Time
 	for {
 		time.Sleep(watchEvery)
-		// Les vérifications en cours, client par client.
+		// Les vérifications en cours, client par client. Les ajouts laissés à
+		// l'arrêt (« Vérification incomplète ») sont relus une fois par minute :
+		// retirés du client à la main, leur ligne restait en erreur dans D3X
+		// (Bobobobobo123, 25/10/26).
+		withFailed := time.Since(failedAt) >= failedEvery
+		if withFailed {
+			failedAt = time.Now()
+		}
 		e.mu.Lock()
 		byClient := map[string][]string{}
 		for h, w := range e.watches {
-			if w.Status == StChecking {
+			if w.Status == StChecking || (withFailed && w.Status == StFailed) {
 				byClient[w.Client] = append(byClient[w.Client], h)
 			}
 		}
@@ -284,7 +292,18 @@ func (e *Engine) step(ctx context.Context, q client.Client, h string, byHash map
 		w.MissSince = time.Now()
 	}
 	missing := !ok && time.Since(w.MissSince) >= missGrace
+	failed := w.Status == StFailed
 	e.mu.Unlock()
+	// Laissé à l'arrêt : on ne guette que son retrait du client, rien d'autre
+	// ne change sans un « Revérifier ».
+	if failed {
+		if missing {
+			set(StRemoved, "retiré du client, fichiers intacts")
+			journal.Add(journal.Event{Kind: "removed", Name: w.Name, InfoHash: h, ID: w.ID, Detail: w.Detail})
+			e.forget(h)
+		}
+		return
+	}
 	switch {
 	case !ok && !missing:
 		// Peut-être un client qui redémarre : on attend avant de conclure.
@@ -398,6 +417,7 @@ var (
 	maxRechecks = 3
 	endStable   = 20 * time.Second // fin sous 100 % stable avant de conclure
 	missGrace   = 2 * time.Minute  // absent du client aussi longtemps avant de le dire retiré
+	failedEvery = time.Minute      // relecture des ajouts laissés à l'arrêt
 )
 
 // Recheck relance la vérification d'un ajout marqué en échec (bouton
@@ -619,7 +639,13 @@ func (e *Engine) Remove(key string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := t.Client.RemoveKeepFiles(ctx, hash); err != nil {
-		return err
+		// Déjà retiré du client à la main : certains clients refusent de
+		// retirer un torrent qu'ils n'ont plus, la ligne passe quand même en
+		// « Retiré » (Bobobobobo123, 25/10/26).
+		lst, lerr := t.Client.List(ctx, []string{hash})
+		if lerr != nil || hasHash(lst, hash) {
+			return err
+		}
 	}
 	e.mu.Lock()
 	if w := e.watches[hash]; w != nil {
@@ -633,6 +659,21 @@ func (e *Engine) Remove(key string) error {
 	e.touch()
 	e.mu.Unlock()
 	return nil
+}
+
+// hasHash : ce torrent figure-t-il dans la liste du client (v1 ou v2) ?
+func hasHash(lst []client.Torrent, h string) bool {
+	for _, t := range lst {
+		if strings.EqualFold(t.Hash, h) {
+			return true
+		}
+		for _, x := range t.Hashes {
+			if strings.EqualFold(x, h) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (e *Engine) loadWatches() {
