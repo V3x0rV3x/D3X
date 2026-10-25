@@ -156,31 +156,42 @@ func (s *Server) pubFile(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(b)
 }
 
-// Contexte du membre gardé 5 minutes (catégories, équipe, modèles).
-func (s *Server) pubContext(w http.ResponseWriter, r *http.Request) {
+// publishContext : le contexte du membre (catégories, team, modèles), gardé
+// 5 minutes. Pour la page et pour le lot.
+func (s *Server) publishContext(ctx context.Context, fresh bool) ([]byte, error) {
 	s.mu.Lock()
 	cached, at := s.pubCtx, s.pubCtxAt
 	s.mu.Unlock()
-	if cached != nil && time.Since(at) < 5*time.Minute && r.URL.Query().Get("fresh") == "" {
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.Write(cached)
-		return
+	if cached != nil && time.Since(at) < 5*time.Minute && !fresh {
+		return cached, nil
 	}
 	v, err := s.v3xClient()
 	if err != nil {
+		return nil, err
+	}
+	raw, err := v.PublishContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	s.pubCtx, s.pubCtxAt = raw, time.Now()
+	s.mu.Unlock()
+	return raw, nil
+}
+
+func (s *Server) pubContext(w http.ResponseWriter, r *http.Request) {
+	// D3X pas connecté : 400, comme avant ; une erreur du site garde son code.
+	if _, err := s.v3xClient(); err != nil {
 		fail(w, http.StatusBadRequest, err)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
-	raw, err := v.PublishContext(ctx)
+	raw, err := s.publishContext(ctx, r.URL.Query().Get("fresh") != "")
 	if err != nil {
 		apiFail(w, err)
 		return
 	}
-	s.mu.Lock()
-	s.pubCtx, s.pubCtxAt = raw, time.Now()
-	s.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Write(raw)
 }
@@ -420,13 +431,7 @@ func (s *Server) pubPublish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Champs acceptés : ceux de la page d'upload du site, rien d'autre.
-	allowed := map[string]bool{"categoryId": true, "description": true, "descriptionFormat": true, "title": true, "releaseName": true, "nfo": true, "language": true, "season": true, "tmdbUrl": true, "noTmdb": true, "anonymous": true, "exclusive": true, "teamRelease": true, "posterUrl": true, "creator": true, "virusTotalUrl": true}
-	fields := map[string]string{"rightsDeclared": "true", "sessionId": "d3x-" + time.Now().UTC().Format("20060102")}
-	for k, v := range in.Fields {
-		if allowed[k] {
-			fields[k] = v
-		}
-	}
+	fields := publishFields(in.Fields)
 	if fields["categoryId"] == "" {
 		fail(w, http.StatusBadRequest, errors.New("choisis une catégorie"))
 		return

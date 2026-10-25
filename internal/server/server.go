@@ -19,23 +19,25 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"io"
 	"io/fs"
 	"log"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/V3x0rV3x/D3X/internal/batch"
 	"github.com/V3x0rV3x/D3X/internal/client"
 	"github.com/V3x0rV3x/D3X/internal/config"
 	"github.com/V3x0rV3x/D3X/internal/crossseed"
 	"github.com/V3x0rV3x/D3X/internal/desktop"
 	"github.com/V3x0rV3x/D3X/internal/journal"
+	"github.com/V3x0rV3x/D3X/internal/mediainfo"
 	"github.com/V3x0rV3x/D3X/internal/musicbrainz"
 	"github.com/V3x0rV3x/D3X/internal/pathmap"
 	"github.com/V3x0rV3x/D3X/internal/publish"
@@ -76,8 +78,11 @@ type Server struct {
 	lastSeen        atomic.Int64
 	byeAt           atomic.Int64
 	pagesMu         sync.Mutex
-	pages           map[string]bool  // page → affichée à l'écran (ping ?id=&shown=)
-	lotPages        map[string]int64 // page → dernier signal avec un lot en cours (UnixNano)
+	pages           map[string]bool // page → affichée à l'écran (ping ?id=&shown=)
+
+	lot    *batch.Engine      // le lot (publication par lot), dans D3X lui-même
+	mi     *mediainfo.Chooser // MediaInfo : binaire s'il existe, sinon une page
+	miPage *mediainfo.Page
 
 	ssh     *remote.Client // seedbox connectée (nil sinon)
 	sshSys  string
@@ -133,6 +138,14 @@ func NewWith(version string, cfg *config.Config, token string, port int, opts Op
 	s.engine.SetRefresh(s.retryClients)
 	s.mb = musicbrainz.New(version)
 	s.pub = publish.New(s.env, s.engine, version)
+	s.miPage = mediainfo.NewPage()
+	s.mi = &mediainfo.Chooser{Exec: mediainfo.Find(), Page: s.miPage}
+	if s.mi.Exec != nil {
+		log.Println("MediaInfo : binaire", s.mi.Exec.Path)
+	} else if p := strings.TrimSpace(os.Getenv("D3X_MEDIAINFO")); p != "" {
+		log.Println("MediaInfo : attention, D3X_MEDIAINFO désigne", p, "qui est introuvable ; le lot demandera le MediaInfo à une page")
+	}
+	s.lot = batch.New(batchDeps{s})
 	sub, _ := fs.Sub(uiFS, "ui")
 	s.mux.Handle("GET /", http.FileServer(http.FS(sub)))
 	s.mux.HandleFunc("GET /auth", s.auth)
@@ -166,15 +179,6 @@ func NewWith(version string, cfg *config.Config, token string, port int, opts Op
 	s.mux.HandleFunc("POST /ui/update/check", s.checkNow)
 	s.mux.HandleFunc("GET /ui/ping", s.ping)
 	s.mux.HandleFunc("POST /ui/bye", func(w http.ResponseWriter, r *http.Request) {
-		// La page qui s'en va emporte son lot (il avance depuis elle).
-		var in struct {
-			ID string `json:"id"`
-		}
-		if json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&in) == nil && in.ID != "" {
-			s.pagesMu.Lock()
-			delete(s.lotPages, in.ID)
-			s.pagesMu.Unlock()
-		}
 		s.byeAt.Store(time.Now().UnixNano())
 		w.WriteHeader(http.StatusNoContent)
 	})
@@ -590,8 +594,33 @@ func (s *Server) stop(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.engine.State())
 }
 
+// lotSummary : ce que toute page doit savoir du lot (état, MediaInfo demandé).
+type lotSummary struct {
+	State           string             `json:"state"`
+	MediaInfoWanted *mediainfo.Request `json:"mediainfoWanted,omitempty"`
+}
+
+func (s *Server) lotSummary() *lotSummary {
+	r := s.lot.State()
+	if r == nil {
+		return nil
+	}
+	out := &lotSummary{State: r.State}
+	if r.State == batch.StRunning {
+		if p := s.miPage.Pending(); p != nil {
+			out.State, out.MediaInfoWanted = "paused", p
+		}
+	}
+	return out
+}
+
+// status : l'état de l'analyse, et celui du lot pour que la page de
+// n'importe quel onglet voie qu'une demande de MediaInfo attend.
 func (s *Server) status(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.engine.State())
+	writeJSON(w, http.StatusOK, struct {
+		crossseed.Status
+		Lot *lotSummary `json:"lot,omitempty"`
+	}{s.engine.State(), s.lotSummary()})
 }
 
 func (s *Server) rows(w http.ResponseWriter, r *http.Request) {

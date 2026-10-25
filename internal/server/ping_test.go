@@ -69,10 +69,10 @@ func TestResumedGivesPageTime(t *testing.T) {
 	}
 }
 
-// Lot en cours (karat, 24/10/26) : une page qui se tait pendant son lot
-// (fenêtre endormie, écran éteint) n'est pas partie ; à la fin du lot, après
-// 12 h, ou quand la page du lot dit au revoir, si.
-func TestLotKeepsPageAlive(t *testing.T) {
+// Le lot tourne dans D3X (plus depuis la page) : le paramètre lot du ping
+// ne retient plus D3X, la page partie l'est au bout de 3 min de silence ou
+// 8 s après son au revoir, et aucun lot ne tourne ici.
+func TestPageGoneWithoutLot(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("AppData", tmp)
 	t.Setenv("XDG_CONFIG_HOME", tmp)
@@ -83,53 +83,28 @@ func TestLotKeepsPageAlive(t *testing.T) {
 	quiet := func(d time.Duration) { s.lastSeen.Store(time.Now().Add(-d).UnixNano()) }
 
 	if code, _, _ := call(t, s, http.MethodGet, "/ui/ping?id=lot&shown=1&lot=1", nil); code != http.StatusNoContent {
-		t.Fatalf("ping du lot : %d", code)
+		t.Fatalf("ping : %d", code)
 	}
-	if !s.LotRunning() || !s.LotAdvancing() {
-		t.Fatal("lot signalé : LotRunning et LotAdvancing attendus")
+	if s.LotAdvancing() || s.Busy() {
+		t.Fatal("aucun lot démarré : ni LotAdvancing ni Busy")
 	}
-	quiet(time.Hour)
+	quiet(time.Minute)
 	if s.PageGone() {
-		t.Fatal("lot en cours : une heure de silence n'arrête pas D3X")
+		t.Fatal("une minute de silence : la page est encore là")
 	}
-	if s.LotAdvancing() {
-		t.Fatal("page muette : son lot n'avance plus, la veille doit revenir")
-	}
-	s.pagesMu.Lock()
-	s.lotPages["lot"] = time.Now().Add(-13 * time.Hour).UnixNano()
-	s.pagesMu.Unlock()
-	quiet(13 * time.Hour)
-	if !s.PageGone() {
-		t.Fatal("13 h de silence : page partie attendue")
-	}
-
-	// Fin du lot : le silence ordinaire revient.
-	call(t, s, http.MethodGet, "/ui/ping?id=lot&shown=1&lot=1", nil)
-	call(t, s, http.MethodGet, "/ui/ping?id=lot&shown=1&lot=0", nil)
 	quiet(10 * time.Minute)
-	if s.LotRunning() || !s.PageGone() {
-		t.Fatal("lot fini : 10 min de silence = page partie")
+	if !s.PageGone() {
+		t.Fatal("10 min de silence : page partie attendue, même avec lot=1")
 	}
 
-	// Au revoir d'une autre page : le lot continue ; celui de la page du lot : fini.
-	call(t, s, http.MethodGet, "/ui/ping?id=lot&shown=1&lot=1", nil)
-	bye := func(id string) {
-		if code, _, _ := call(t, s, http.MethodPost, "/ui/bye", map[string]string{"id": id}); code != http.StatusNoContent {
-			t.Fatalf("au revoir : %d", code)
-		}
-		t0 := time.Now().Add(-20 * time.Second).UnixNano()
-		s.lastSeen.Store(t0)
-		s.byeAt.Store(t0 + int64(time.Second))
+	call(t, s, http.MethodGet, "/ui/ping?id=lot&shown=1", nil)
+	if code, _, _ := call(t, s, http.MethodPost, "/ui/bye", nil); code != http.StatusNoContent {
+		t.Fatalf("au revoir : %d", code)
 	}
-	bye("autre")
-	if s.PageGone() {
-		t.Fatal("une autre page fermée : le lot continue")
-	}
-	bye("lot")
-	if s.LotRunning() || !s.PageGone() {
-		t.Fatal("page du lot fermée : page partie attendue")
-	}
-	if !strings.Contains(s.GoneWhy(), "au revoir") {
-		t.Fatalf("raison : %q", s.GoneWhy())
+	t0 := time.Now().Add(-20 * time.Second).UnixNano()
+	s.lastSeen.Store(t0)
+	s.byeAt.Store(t0 + int64(time.Second))
+	if !s.PageGone() || !strings.Contains(s.GoneWhy(), "au revoir") {
+		t.Fatalf("page fermée : partie attendue (%q)", s.GoneWhy())
 	}
 }
