@@ -1,0 +1,109 @@
+package batch
+
+import (
+	"testing"
+
+	"github.com/V3x0rV3x/D3X/internal/v3x"
+)
+
+func TestCertainWork(t *testing.T) {
+	movie := Work{Type: "movie", ID: "1", Title: "Démonstration", OriginalTitle: "Demonstration", Year: "2024"}
+	tv := Work{Type: "tv", ID: "2", Title: "Démonstration, la série", Year: "2023"}
+	if w := certainWork([]Work{movie, tv}, "Demonstration", "2024", false); w == nil || w.ID != "1" {
+		t.Fatalf("film : %+v", w)
+	}
+	if w := certainWork([]Work{movie, tv}, "Demonstration", "2024", true); w != nil {
+		t.Fatalf("série attendue, pas de film : %+v", w)
+	}
+	if w := certainWork([]Work{movie}, "Demonstration", "2020", false); w != nil {
+		t.Fatalf("année trop éloignée : %+v", w)
+	}
+	if w := certainWork([]Work{movie}, "Autre Chose", "2024", false); w != nil {
+		t.Fatalf("titre différent : %+v", w)
+	}
+	// Deux candidats plausibles : incertain.
+	if w := certainWork([]Work{movie, {Type: "movie", ID: "3", Title: "Demonstration", Year: "2025"}}, "Demonstration", "2024", false); w != nil {
+		t.Fatalf("deux candidats : %+v", w)
+	}
+}
+
+func TestNameWithToken(t *testing.T) {
+	for _, c := range []struct{ name, token, want string }{
+		{"Artiste - Album [FLAC]", "FLAC 24bit-96kHz", "Artiste - Album [FLAC 24bit-96kHz]"},
+		{"Artiste - Album", "FLAC 24bit-96kHz", "Artiste - Album [FLAC 24bit-96kHz]"},
+		{"Artiste.Album.2020", "MP3 320", "Artiste.Album.2020.MP3.320"},
+		{"Artiste-Album-2020-FLAC", "FLAC 16bit-44.1kHz", "Artiste-Album-2020-FLAC-16bit-44.1kHz"},
+		{"Artiste - Album", "", "Artiste - Album"},
+	} {
+		if got := nameWithToken(c.name, c.token); got != c.want {
+			t.Errorf("nameWithToken(%q, %q) = %q, attendu %q", c.name, c.token, got, c.want)
+		}
+	}
+}
+
+func TestNfo(t *testing.T) {
+	if got := decodeNfo([]byte("plain \xc3\xa9t\xc3\xa9")); got != "plain été" {
+		t.Errorf("utf-8 : %q", got)
+	}
+	if got := decodeNfo([]byte{0xC9, 0xCD, 0xBB, 'a'}); got != "╔═╗a" {
+		t.Errorf("cp437 : %q", got)
+	}
+	if !hasMediaInfo("General\nComplete name : x") || hasMediaInfo("rien") {
+		t.Error("hasMediaInfo")
+	}
+	if got := nfoWithMediaInfo("NFO", "General\n..."); got != "NFO\n\nGeneral\n..." {
+		t.Errorf("ajout : %q", got)
+	}
+	if got := nfoWithMediaInfo("General\nComplete name : x", "autre"); got != "General\nComplete name : x" {
+		t.Errorf("déjà présent : %q", got)
+	}
+	if got := nfoWithMediaInfo("", "mi"); got != "" {
+		t.Errorf("vide : %q", got)
+	}
+}
+
+func TestStripExt(t *testing.T) {
+	if got := stripExt("Film.2020.mkv", true); got != "Film.2020" {
+		t.Errorf("%q", got)
+	}
+	if got := stripExt("Dossier.mkv", false); got != "Dossier.mkv" {
+		t.Errorf("%q", got)
+	}
+}
+
+func TestTexts(t *testing.T) {
+	if got := dupText(&v3x.Match{Kind: "exact", Name: "X"}); got != "déjà sur V3X : X · « Revoir » pour la seeder avec ces fichiers" {
+		t.Errorf("%q", got)
+	}
+	if got := dupText(&v3x.Match{Kind: "renamed", Name: "X"}); got != "déjà sur V3X : X · la Médiathèque la met en seed avec ces fichiers" {
+		t.Errorf("%q", got)
+	}
+	if got := goneText(&v3x.Gone{Status: "trumped", Own: true, Reason: "mieux"}); got != "une fiche V3X de ce contenu a été remplacée par une meilleure version (ta fiche, motif : mieux)" {
+		t.Errorf("%q", got)
+	}
+	if got := pubErr("validation", `{"field":"title","detail":"vide"}`); got != "un champ de la fiche est refusé : title (vide)" {
+		t.Errorf("%q", got)
+	}
+	if got := pubErr("duplicate", `{"existing":{"id":"abc"}}`); got != "cette release est déjà sur V3X (même .torrent). Fiche existante : https://v3x.club/torrents/abc" {
+		t.Errorf("%q", got)
+	}
+	if got := pubErr("upscale_detected", ""); got != "les releases agrandies par IA ne sont pas acceptées telles quelles" {
+		t.Errorf("%q", got)
+	}
+	if got := pubErr("inconnu", "pas du json"); got != "inconnu" {
+		t.Errorf("%q", got)
+	}
+	if !blocking["mediainfo_missing"] || blocking["tmdb_missing"] {
+		t.Error("blocking")
+	}
+}
+
+func TestPickNfo(t *testing.T) {
+	files := []File{{Rel: "Rel/Rel.nfo", Size: 100}, {Rel: "Rel/Sub/ep.nfo", Size: 50}, {Rel: "Rel/autre.nfo", Size: 10}, {Rel: "Rel/gros.nfo", Size: 300000}}
+	if i := pickNfo("Rel", files); i != 0 {
+		t.Errorf("index %d", i)
+	}
+	if i := pickNfo("Rel", nil); i != -1 {
+		t.Errorf("sans nfo : %d", i)
+	}
+}
