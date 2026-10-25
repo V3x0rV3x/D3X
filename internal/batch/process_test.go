@@ -363,6 +363,9 @@ func TestProcessCases(t *testing.T) {
 		if en := entryByPath(r, "/r/P"); en.State != "error" || !strings.Contains(en.Detail, "nil pointer") {
 			t.Fatalf("panique : %+v", en)
 		}
+		if !d.wasCancelled("job-/r/P") {
+			t.Error("la publication de la release en panique doit être annulée")
+		}
 		if en := entryByPath(r, "/r/A"); en.State != "simulated" {
 			t.Fatalf("la suivante : %+v", en)
 		}

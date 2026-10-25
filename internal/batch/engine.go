@@ -34,13 +34,14 @@ func New(d Deps) *Engine {
 	return &Engine{deps: d, pause: 7 * time.Second, poll: 700 * time.Millisecond, checkPoll: 2 * time.Second}
 }
 
-// lot : le run en cours tel que la boucle le voit. Rien n'y est réassigné
-// pendant le run : la boucle le lit sans le verrou de l'Engine.
+// lot : le run en cours tel que la boucle le voit. Seule la boucle y écrit
+// (job) : elle le lit sans le verrou de l'Engine.
 type lot struct {
 	r     *Run
 	src   source.Source
 	ctx   context.Context // coupé par l'arrêt : sert au seul calcul du MediaInfo
 	stopc <-chan struct{}
+	job   string // publication démarrée pour la release en cours, pas encore annulée
 }
 
 func (l *lot) stopped() bool {
@@ -172,8 +173,8 @@ func (e *Engine) copyLocked() *Run {
 // set modifie le run sous verrou.
 func (e *Engine) set(f func(r *Run)) {
 	e.mu.Lock()
+	defer e.mu.Unlock() // une fonction qui panique ne garde pas le verrou
 	f(e.run)
-	e.mu.Unlock()
 }
 
 func (e *Engine) progress(label, detail string) {
@@ -267,12 +268,18 @@ func (e *Engine) loop(l *lot) {
 
 // processSafe : une panique sur une release la met en erreur et le lot
 // continue (comme le try/catch de la page autour de processEntry).
+// La publication démarrée pour elle est annulée, sauf si elle est partie.
 func (e *Engine) processSafe(l *lot, en *Entry) {
+	l.job = ""
 	defer func() {
 		if p := recover(); p != nil {
 			log.Printf("lot : panique sur %s : %v", en.Name, p)
+			if l.job != "" && en.State != "published" {
+				e.deps.PubCancel(l.job)
+			}
 			e.decide(l.src, en, "error", fmt.Sprint(p), "")
 		}
+		l.job = ""
 	}()
 	e.process(l, en)
 }

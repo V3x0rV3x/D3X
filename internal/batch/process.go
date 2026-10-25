@@ -151,7 +151,8 @@ func (e *Engine) process(l *lot, en *Entry) {
 		e.decide(src, en, "error", err.Error(), "")
 		return
 	}
-	cancel := func() { e.deps.PubCancel(j.ID) }
+	l.job = j.ID
+	cancel := func() { e.deps.PubCancel(j.ID); l.job = "" }
 	if j.Duplicate != nil {
 		cancel()
 		e.decide(src, en, "duplicate", dupText(j.Duplicate), j.Duplicate.ID)
@@ -425,7 +426,8 @@ func (e *Engine) processReady(l *lot, en *Entry) {
 		e.decide(src, en, "error", err.Error(), "")
 		return
 	}
-	cancel := func() { e.deps.PubCancel(j.ID) }
+	l.job = j.ID
+	cancel := func() { e.deps.PubCancel(j.ID); l.job = "" }
 	if j.Duplicate != nil {
 		cancel()
 		e.decide(src, en, "duplicate", dupText(j.Duplicate), j.Duplicate.ID)
