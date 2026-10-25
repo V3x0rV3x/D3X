@@ -161,6 +161,7 @@ func NewWith(version string, cfg *config.Config, token string, port int, opts Op
 	s.routesSeed()
 	s.routesCandidates()
 	s.routesLibrary()
+	s.routesSeries()
 	s.mux.HandleFunc("POST /ui/update/restart", s.restartNow)
 	s.mux.HandleFunc("POST /ui/update/check", s.checkNow)
 	s.mux.HandleFunc("GET /ui/ping", s.ping)
