@@ -14,6 +14,7 @@ const lot = {
   done: 0,
   total: 0,
   seen: "", // dernier état du lot de D3X vu par cette page
+  lastRun: null, // dernier état reçu, reposé sur le dossier relu
   gen: 0, // un par lot lancé d'ici : écarte un suivi parti avant
   poll: null,
 };
@@ -403,10 +404,14 @@ function applyRun(run) {
     lot.source = run.source;
     $("#b-path").value = run.dir || "";
     $("#b-fs").classList.add("hidden");
+    // Tout de suite les releases du lot, puis le dossier entier relu dans le
+    // journal (Déjà présent, Ignoré, Publié d'avant…), le lot par-dessus.
     lot.entries = lotEntries(run.entries);
     window.lotSources();
     adopted = true;
+    if (run.dir) lotAdoptFolder(run.dir, run.source);
   }
+  lot.lastRun = run;
   // Les états du lot ne s'appliquent que pendant qu'il tourne, et une fois à
   // sa fin : ensuite la liste est à l'utilisateur (cases décochées, Ignorer,
   // remise en attente, autre dossier listé), le suivi ne la réécrit plus.
@@ -423,14 +428,7 @@ function applyRun(run) {
         e = lotEntries([re])[0];
         lot.entries.push(e);
       }
-      e.state = re.state;
-      e.detail = re.detail || "";
-      e.job = re.job || e.job;
-      e.last = re.last || e.last;
-      e.active = !!re.active;
-      if (re.requests) e.requests = re.requests;
-      if (active) e.checked = false;
-      else e.checked = re.state === "review" || re.state === "simulated";
+      overlayEntry(e, re, active);
     }
   }
   lot.running = active;
@@ -453,6 +451,49 @@ function applyRun(run) {
     toast((run.stopped ? "Lot arrêté." : "Lot terminé : " + done + ", " + (counts.review || 0) + " à vérifier.") + started, "ok");
   }
   lot.seen = run.state;
+}
+
+// overlayEntry reporte l'état d'une release du lot sur la ligne de la page.
+function overlayEntry(e, re, active) {
+  e.state = re.state;
+  e.detail = re.detail || "";
+  e.job = re.job || e.job;
+  e.last = re.last || e.last;
+  e.active = !!re.active;
+  if (re.requests) e.requests = re.requests;
+  if (active) e.checked = false;
+  else e.checked = re.state === "review" || re.state === "simulated";
+}
+
+// Dossier d'un lot repris par une page rouverte : relu en entier, puis le
+// dernier état du lot posé dessus. Si l'utilisateur a listé un autre dossier
+// (ou choisi dans Cross-seed) entre-temps, la réponse est jetée ; illisible,
+// la liste du lot seul reste.
+async function lotAdoptFolder(dir, source) {
+  let r;
+  try {
+    r = await api("/ui/batch/list?source=" + source + "&path=" + encodeURIComponent(dir));
+  } catch (e) {
+    return; // la liste du lot seul reste (session perdue : api() le dit déjà)
+  }
+  if (lot.dir !== dir || lot.picked) return;
+  const run = lot.lastRun;
+  const active = !!run && (run.state === "running" || run.state === "paused" || run.state === "stopping");
+  const entries = lotEntries(r.entries);
+  const byPath = new Map(entries.map((e) => [e.path, e]));
+  // Une release du lot absente du dossier relu (déplacée, renommée) reste affichée.
+  if (run && run.dir === dir) {
+    for (const re of run.entries) {
+      let e = byPath.get(re.path);
+      if (!e) {
+        e = lotEntries([re])[0];
+        entries.push(e);
+      }
+      overlayEntry(e, re, active);
+    }
+  }
+  lot.entries = entries;
+  lotRender();
 }
 
 // Suivi du lot : chaque seconde tant qu'il tourne, toutes les 5 s quand le
