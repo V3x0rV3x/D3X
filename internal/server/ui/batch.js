@@ -1,8 +1,8 @@
 "use strict";
 
-// Vue « Lot ». Mène les releases d'un dossier une par une, avec les mêmes
-// routes que la vue Publier (liste, hachage, MediaInfo, fiche, publication).
-// Ne publie seule une release que si tout est sûr ; le reste est « à vérifier ».
+// Vue « Lot ». Le lot tourne dans D3X, release par release ; la page choisit
+// les releases, le lance, l'arrête et suit son état. D3X ne publie seul une
+// release que si tout est sûr ; le reste est « à vérifier ».
 
 const lot = {
   dir: "",
@@ -15,6 +15,8 @@ const lot = {
   published: 0,
   done: 0,
   total: 0,
+  seen: "", // dernier état du lot de D3X vu par cette page
+  poll: null,
 };
 
 // États du lot, dans l'ordre des onglets.
@@ -31,34 +33,6 @@ const LOT_TABS = [
   ["error", "Erreur", "Illisible ou refusée par V3X."],
 ];
 const LOT_STATE_OF_KIND = { published: "published", batch_ready: "ready", batch_review: "review", batch_simulated: "simulated", batch_duplicate: "duplicate", batch_ignored: "ignored", batch_error: "error" };
-
-// ---------- ressemblance des titres ----------
-
-function words(s) {
-  const out = new Set();
-  const n = String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/['’]/g, "").toLowerCase();
-  for (const t of n.split(/[^a-z0-9]+/)) if (t.length > 1) out.add(t);
-  return out;
-}
-
-function similarity(a, b) {
-  const A = words(a), B = words(b);
-  if (!A.size || !B.size) return 0;
-  let c = 0;
-  for (const t of A) if (B.has(t)) c++;
-  return c / (A.size + B.size - c);
-}
-
-// Œuvre certaine : même titre (ou titre original) à 60 % au moins, même année
-// à un an près, et le bon type (série si le nom porte une saison).
-function certainWork(results, title, year, isSeries) {
-  const ok = results.filter((r) => {
-    if ((r.type === "tv") !== !!isSeries) return false;
-    if (year && r.year && Math.abs(Number(r.year) - Number(year)) > 1) return false;
-    return Math.max(similarity(title, r.title), similarity(title, r.originalTitle || "")) >= 0.6;
-  });
-  return ok.length === 1 ? ok[0] : null;
-}
 
 // ---------- liste ----------
 
@@ -317,12 +291,6 @@ function lotProgress(label, detail) {
   $("#b-progress-fill").style.width = (lot.total ? Math.max(3, (lot.done / lot.total) * 100) : 0) + "%";
 }
 
-// Déjà sur V3X : à l'identique, « Revoir » la met en seed avec ces fichiers ;
-// sous d'autres noms, la Médiathèque les rapproche.
-function dupText(d) {
-  return "déjà sur V3X : " + d.name + (d.kind === "exact" || d.kind === "self" ? " · « Revoir » pour la seeder avec ces fichiers" : " · la Médiathèque la met en seed avec ces fichiers");
-}
-
 async function decide(e, state, detail, id) {
   e.state = state;
   e.detail = detail || "";
@@ -346,339 +314,151 @@ async function lotIgnore(e) {
   await decide(e, "ignored", "écartée à la main");
 }
 
-// ---------- traitement d'une release ----------
-
-const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-
-async function waitJob(id, done) {
-  for (;;) {
-    const j = await api("/ui/pub/" + id);
-    if (done(j)) return j;
-    if (lot.stop) return j;
-    lotProgress("Lot : " + (lot.done + 1) + " / " + lot.total, j.state === "hashing" ? "hachage " + Math.round((j.hashed / Math.max(j.total, 1)) * 100) + " %" : "");
-    await wait(700);
-  }
-}
-
-// Release gardée depuis Publier : publiée avec la fiche gardée, sans rien
-// redécider (CoprinusComatus, 21/10/26).
-async function processReady(e, opts) {
-  let p;
-  try {
-    p = await api("/ui/batch/prepared?source=" + lot.source + "&path=" + encodeURIComponent(e.path));
-  } catch (err) {
-    if (err.message === "session") throw err;
-    return decide(e, "review", err.message);
-  }
-  const summary = p.summary || p.fields.releaseName;
-  if (opts.sim) {
-    e.detail = "serait publiée avec ta fiche : " + summary;
-    lotRender();
-    return;
-  }
-  let j = await api("/ui/pub/start", { path: e.path, source: lot.source });
-  const cancel = async () => { try { await api("/ui/pub/" + j.id + "/cancel", {}); } catch (err) { /* rien */ } };
-  if (j.duplicate) {
-    await cancel();
-    return decide(e, "duplicate", dupText(j.duplicate), j.duplicate.id);
-  }
-  j = await waitJob(j.id, (x) => x.state !== "hashing");
-  if (j.state !== "ready") {
-    await cancel();
-    return decide(e, "error", j.error || "le .torrent n'a pas pu être fabriqué");
-  }
-  if (await publishWith(e, j, p.fields, summary)) {
-    try { await api("/ui/batch/prepared/drop", { path: e.path, source: lot.source }); } catch (err) { /* rien */ }
-  }
-}
-
-async function processEntry(e, opts) {
-  if (e.state === "ready") return processReady(e, opts);
-  if (e.exec) return decide(e, "review", "contient un exécutable : jamais publié par un lot");
-  if (opts.video && !e.video && !e.audio) return decide(e, "review", "ni vidéo ni album (option « Vidéos et albums seulement »)");
-  if (opts.cap > 0 && e.size > opts.cap * 1073741824) return decide(e, "review", "au-delà du plafond de " + opts.cap + " Gio : pas hachée");
-  if (e.flat) return decide(e, "review", "dossier sans fichier à sa racine (collection, plusieurs releases ?)");
-
-  let j = await api("/ui/pub/start", { path: e.path, source: lot.source });
-  const cancel = async () => { try { await api("/ui/pub/" + j.id + "/cancel", {}); } catch (err) { /* rien */ } };
-  if (j.duplicate) {
-    await cancel();
-    return decide(e, "duplicate", dupText(j.duplicate), j.duplicate.id);
-  }
-  if (j.gone) {
-    await cancel();
-    return decide(e, "review", goneText(j.gone) + " : jamais republiée par un lot, « Revoir » si la raison ne s'applique plus");
-  }
-  // MediaInfo pendant le hachage.
-  let mi = "";
-  try { mi = await mediaInfoOf(j); } catch (err) { mi = ""; }
-  let name = j.single ? j.name.replace(/\.(mkv|mp4|avi|m2ts|ts|mov|wmv|webm|mpe?g|m4v|iso|flac|mp3|m4a)$/i, "") : j.name;
-  const album = !!(j.audio && j.audio.tracks && j.audio.tracks.length && !e.video);
-  // Album : Audio ▸ Musique et l'édition MusicBrainz, si elle est certaine.
-  const mc = album ? musicCategory() : null;
-  let mbw = null;
-  if (album) mbw = await lotAlbumWork(j);
-  const ficheOf = (ref) =>
-    api("/ui/pub/" + j.id + "/fiche", {
-      releaseName: name,
-      mediainfo: mi,
-      tmdbRef: ref,
-      mbRef: mbw && mbw.mb ? mbURL(mbw.mb) : null,
-      categorySlug: mc ? mc.leaf.slug : null,
-      templateId: null,
-    });
-  let f = await ficheOf(null);
-
-  // Œuvre : recherche TMDB, retenue seulement si elle est certaine.
-  const year = ((f.analysis && f.analysis.tokens) || []).find((t) => t.kind === "year");
-  const isSeries = !!f.season || /\bS\d{1,2}(E\d{1,3})?\b/i.test(name);
-  let work = null;
-  // Série déjà choisie à la main pour une autre saison (quebecman, 23/10/26) :
-  // reprise telle quelle, sans nouvelle recherche.
-  if (isSeries && !album) work = rememberedSeries(seriesTitleOf(f));
-  if (!work && f.tmdbQuery && !album) {
-    try {
-      const r = await api("/ui/pub/tmdb/search?q=" + encodeURIComponent(f.tmdbQuery));
-      work = certainWork((r.results || []).filter((x) => x.type === "movie" || x.type === "tv"), (f.analysis && f.analysis.title) || f.tmdbQuery, year && year.value, isSeries);
-    } catch (err) { work = null; }
-  }
-  if (work) f = await ficheOf(work.type + "/" + work.id);
-
-  // Album sans la qualité dans le nom : complété si l'option est cochée.
-  let renamed = false;
-  if (album && opts.fixName && j.audio.token && (f.warnings || []).includes("audio_naming")) {
-    const fixed = nameWithToken(name, j.audio.token);
-    if (fixed !== name) {
-      name = fixed;
-      renamed = true;
-      f = await ficheOf(null);
-    }
-  }
-
-  const reasons = [];
-  const cat = f.category;
-  const filmSeries = cat && (cat.slug.startsWith("films-videos") || cat.slug.startsWith("films") || cat.slug.startsWith("series"));
-  if (!cat) reasons.push("catégorie à choisir");
-  if (!work && !album && (filmSeries || e.video)) reasons.push("œuvre TMDB incertaine");
-  if (album && !(mbw && mbw.mb)) reasons.push("album incertain : " + ((mbw && mbw.why) || "introuvable"));
-  if (album && j.audio.mixed) reasons.push("pistes de qualités différentes");
-  if (e.video && !mi) reasons.push("MediaInfo illisible");
-  // Seuls les contrôles qui feraient refuser la publication arrêtent le lot ;
-  // les remarques sur le nom (espaces, année…) restent des conseils, comme sur le site.
-  for (const w of f.warnings || []) {
-    if (!BLOCKING.has(w)) continue;
-    if (w === "audio_naming" && j.audio && j.audio.token) reasons.push("nom sans la qualité : « " + nameWithToken(name, j.audio.token) + " » ?");
-    else reasons.push(WARNINGS[w].replace(/\.$/, ""));
-  }
-  // REPACK (ou PROPER) de cette release déjà sur V3X (quebecman, 23/10/26) :
-  // la version d'origine ne part pas seule. Sans réponse du site, le lot continue.
-  try {
-    const q = new URLSearchParams({ name, size: String(j.total || 0) });
-    if (work && !album) q.set("tmdb", work.type + "/" + work.id);
-    if (cat) q.set("category", cat.slug);
-    const v = await api("/ui/pub/versions?" + q.toString());
-    const redo = (v.redo || [])[0];
-    if (redo) reasons.push("un REPACK de cette release est déjà sur V3X : « " + redo.name + " »");
-  } catch (err) { /* rien */ }
-  if (reasons.length) {
-    await cancel();
-    return decide(e, "review", reasons.join(" · "));
-  }
-
-  const found = categoryBySlug(cat.slug);
-  const catName = found && found.leaf ? found.root.name + " ▸ " + found.leaf.name : cat.slug;
-  const workName = album
-    ? mbw.mb.title + (mbw.mb.date ? " (" + mbw.mb.date.slice(0, 4) + ")" : "")
-    : work.title + (work.year ? " (" + work.year + ")" : "");
-  const summary = [catName, workName, renamed ? "nom complété : " + name : ""].filter(Boolean).join(" · ");
-  if (opts.sim) {
-    await cancel(); // le .torrent reste en cache : le vrai lot ne rehachera pas
-    return decide(e, "simulated", "serait publiée : " + summary);
-  }
-
-  j = await waitJob(j.id, (x) => x.state !== "hashing");
-  if (j.state !== "ready") {
-    await cancel();
-    return decide(e, "error", j.error || "le .torrent n'a pas pu être fabriqué");
-  }
-  const team = pub.ctx && pub.ctx.user && pub.ctx.user.team;
-  // Option « Reprendre le .nfo de la release » (Publier) : vaut aussi ici.
-  const ownNfo = keepNfoOn() ? await localNfoOf(j) : "";
-  const fields = {
-    categoryId: String(cat.id),
-    description: f.presentation || "",
-    descriptionFormat: "standard",
-    title: f.title || "",
-    releaseName: name,
-    nfo: ownNfo ? nfoWithMediaInfo(ownNfo, mi) : f.nfo || "",
-    language: f.language || "",
-    anonymous: String(!!(pub.ctx && pub.ctx.user && pub.ctx.user.anonymousDefault)),
-    exclusive: "false",
-    tmdbUrl: album ? mbURL(mbw.mb) : "https://www.themoviedb.org/" + work.type + "/" + work.id,
-  };
-  if (album) fields.creator = f.creator || mbw.mb.artist || "";
-  if (team) fields.teamRelease = String(!!f.teamRelease);
-  if (f.season && cat.slug.indexOf("serie") >= 0) fields.season = f.season;
-  await publishWith(e, j, fields, summary);
-}
-
-// Publie la release du job prêt avec ces champs (fiche du lot ou fiche
-// gardée) ; rend true si V3X l'a acceptée.
-async function publishWith(e, j, fields, summary) {
-  try {
-    await api("/ui/pub/" + j.id + "/publish", { fields });
-  } catch (err) {
-    await decide(e, "error", err.message);
-    return false;
-  }
-  j = await waitJob(j.id, (x) => x.state !== "publishing");
-  if (!j.published) {
-    await decide(e, "error", pubErr(j.error, j.errorBody));
-    return false;
-  }
-  lot.published++;
-  lot.publishedBytes += e.size || 0;
-  e.job = j.id;
-  e.last = { id: j.published.id };
-  e.active = j.published.status === "active";
-  // Une demande ouverte attend peut-être cette release.
-  try {
-    const q = await api("/ui/requests/for?name=" + encodeURIComponent(fields.releaseName || e.name));
-    if (q.requests && q.requests.length) e.requests = q.requests;
-  } catch (err) { /* rien */ }
-  e.state = "published";
-  e.detail = (j.published.status === "active" ? "publiée" : "en attente de validation") + " · " + summary;
-  e.checked = false;
-  lotRender();
-  return true;
-}
-
-// Option « Attendre la vérification » : le lot ne passe à la release suivante
-// qu'une fois celle-ci ajoutée au client et vérifiée, pour ne pas empiler les
-// vérifications sur un disque lent (karat, 21/10/26). « Arrêter » coupe l'attente.
-async function waitChecked(e) {
-  for (;;) {
-    let j;
-    try { j = await api("/ui/pub/" + e.job); } catch (err) { if (err.message === "session") throw err; return; }
-    const s = j.seed;
-    // Fini : erreur d'ajout, torrent déjà dans le client (pas de suivi), ou
-    // vérification terminée (un « démarrage refusé » garde l'état checking avec un détail).
-    const checking = j.state === "seeding" || (s && s.status === "checking" && !s.detail);
-    if (!checking || j.seedError) {
-      if (j.seedError) e.detail += " · seed : " + j.seedError;
-      else if (s && s.status === "seeding") e.detail += " · vérifiée à 100 %, en seed";
-      else if (s && s.detail) e.detail += " · " + s.detail;
-      lotRender();
-      return;
-    }
-    if (lot.stop) return;
-    lotProgress("Lot : " + (lot.done + 1) + " / " + lot.total, "ton client vérifie " + e.name + (s && s.progress ? " (" + Math.round(s.progress * 100) + " %)" : "") + "…");
-    await wait(2000);
-  }
-}
-
 function waitCheckSaved() {
   try { return localStorage.getItem("d3x-lot-waitcheck") === "1"; } catch (err) { return false; }
 }
 
-// Option « Démarrer le seed à la fin du lot » (karat, 22/10/26) : les releases
-// publiées restent à l'arrêt pendant que le lot hache les suivantes. Le bail
-// est renouvelé chaque minute tant que le lot tourne et levé à la fin ; page
-// fermée, il expire seul au bout de 5 minutes et les seeds démarrent.
-const HELD = "vérifiée à 100 %, démarre à la fin du lot";
-
+// Option « Démarrer le seed à la fin du lot » (karat, 22/10/26) : D3X garde les
+// releases publiées à l'arrêt pendant qu'il hache les suivantes.
 function seedLaterSaved() {
   try { return localStorage.getItem("d3x-lot-seedlater") === "1"; } catch (err) { return false; }
 }
 
-function holdSeeds(seconds) {
-  return api("/ui/batch/hold", { seconds }).catch(() => { /* bail suivant, ou expiration */ });
+// ---------- le lot tourne dans D3X ----------
+
+// La page ne mène plus le lot : elle l'envoie à D3X (releases cochées et
+// options), puis suit son état. Fermée et rouverte, elle le retrouve. Sur un
+// serveur (Docker), le lot continue sans elle ; sur ce PC sans binaire
+// mediainfo, c'est elle qui calcule le MediaInfo quand D3X le lui demande.
+
+function lotOptions() {
+  return {
+    sim: $("#b-sim").checked,
+    video: $("#b-video").checked,
+    fixName: $("#b-fixname").checked,
+    waitCheck: $("#b-waitcheck").checked,
+    seedLater: $("#b-seedlater").checked,
+    keepNfo: keepNfoOn(),
+    cap: Number($("#b-cap").value) || 0,
+    max: Number($("#b-max").value) || 0,
+    maxGib: Number($("#b-maxgib").value) || 0,
+  };
 }
 
 async function lotRun() {
   if (lot.running) return;
   if (!pub.ctx) await loadCtx();
   if (!pub.ctx) return toast("Publication impossible : " + (pub.ctxError || "V3X injoignable"), "bad");
-  const opts = { sim: $("#b-sim").checked, video: $("#b-video").checked, fixName: $("#b-fixname").checked, waitCheck: $("#b-waitcheck").checked, seedLater: $("#b-seedlater").checked, cap: Number($("#b-cap").value) || 0, max: Number($("#b-max").value) || 0, maxGib: Number($("#b-maxgib").value) || 0 };
   // Seulement ce qui est coché ET affiché à l'écran : un dossier apparu entre-temps
   // n'est jamais publié sans avoir été vu.
   const todo = lot.entries.filter((e) => e.checked && (e.state === "pending" || e.state === "ready" || e.state === "review" || e.state === "simulated"));
-  lot.running = true;
-  lot.stop = false;
-  lot.done = 0;
-  lot.published = 0;
-  lot.publishedBytes = 0;
-  lot.total = todo.length;
-  lot.tab = "pending";
-  lotRender();
-  ping(); // D3X sait tout de suite qu'un lot tourne
-  const hold = opts.seedLater && !opts.sim;
-  let holdTimer = null;
-  if (hold) {
-    await holdSeeds(300);
-    holdTimer = setInterval(() => holdSeeds(300), 60000);
-  }
+  if (!todo.length) return;
   try {
-    await lotLoop(todo, opts);
-  } finally {
-    if (holdTimer) clearInterval(holdTimer);
-    if (hold) {
-      await holdSeeds(0);
-      for (const e of lot.entries) if (e.detail) e.detail = e.detail.replace(HELD, "seed lancé à la fin du lot");
-    }
+    const run = await api("/ui/batch/start", { path: lot.dir, source: lot.source, paths: todo.map((e) => e.path), options: lotOptions() });
+    lot.seen = "";
+    lot.tab = "pending";
+    applyRun(run);
+    lotPollSoon(0);
+  } catch (e) {
+    if (e.message !== "session") toast(e.message, "bad");
   }
-  lot.running = false;
-  ping();
-  lot.current = "";
-  lotProgress("", "");
-  const counts = {};
-  for (const e of lot.entries) counts[e.state] = (counts[e.state] || 0) + 1;
-  lot.tab = opts.sim ? "simulated" : counts.published ? "published" : "review";
+}
+
+async function lotStop() {
+  try {
+    await api("/ui/batch/stop", {});
+    toast("Le lot s'arrête après la release en cours.");
+  } catch (e) {
+    if (e.message !== "session") toast(e.message, "bad");
+  }
+}
+
+// applyRun reporte l'état du lot de D3X sur la liste de la page. Une page
+// rouverte sans liste reprend le dossier du lot ; une liste déjà préparée (ou
+// choisie dans Cross-seed) est gardée, le lot n'y met que ses états.
+function applyRun(run) {
+  if (!run) return;
+  const active = run.state === "running" || run.state === "paused" || run.state === "stopping";
+  if (active && lot.dir !== run.dir && !lot.picked) {
+    lot.dir = run.dir;
+    lot.source = run.source;
+    $("#b-path").value = run.dir || "";
+    $("#b-fs").classList.add("hidden");
+    lot.entries = lotEntries(run.entries);
+    window.lotSources();
+  }
+  const byPath = new Map(lot.entries.map((e) => [e.path, e]));
+  for (const re of run.entries) {
+    let e = byPath.get(re.path);
+    if (!e) {
+      e = lotEntries([re])[0];
+      lot.entries.push(e);
+    }
+    e.state = re.state;
+    e.detail = re.detail || "";
+    e.job = re.job || e.job;
+    e.last = re.last || e.last;
+    e.active = !!re.active;
+    if (re.requests) e.requests = re.requests;
+    if (active) e.checked = false;
+    else e.checked = re.state === "review" || re.state === "simulated";
+  }
+  lot.running = active;
+  lot.stop = run.state === "stopping";
+  lot.current = run.current || "";
+  lot.done = run.done;
+  lot.total = run.total;
+  lot.published = run.published;
+  lot.publishedBytes = run.publishedBytes;
   lotRender();
-  const started = hold && lot.published ? " Leurs seeds démarrent maintenant." : "";
-  toast((lot.stop ? "Lot arrêté." : "Lot terminé : " + (opts.sim ? (counts.simulated || 0) + " seraient publiées" : lot.published + " publiées") + ", " + (counts.review || 0) + " à vérifier.") + started, "ok");
-}
-
-async function lotLoop(todo, opts) {
-  for (const e of todo) {
-    if (lot.stop) break;
-    if (opts.max > 0 && lot.published >= opts.max && !opts.sim) {
-      e.detail = "plafond de publications atteint";
-      continue;
-    }
-    // Volume publié par lot (quebecman, 21/10/26 : des paquets de 100 Gio au
-    // rythme de son envoi) : une release qui dépasserait le plafond attend le
-    // lot suivant, les plus petites passent encore.
-    if (opts.maxGib > 0 && !opts.sim && lot.publishedBytes + (e.size || 0) > opts.maxGib * 1073741824) {
-      e.detail = "attend le lot suivant : dépasserait les " + opts.maxGib + " Gio publiés de ce lot";
-      continue;
-    }
-    lot.current = e.path;
+  lotProgress(run.label, run.state === "paused" ? "MediaInfo en cours dans cette page…" : run.detail);
+  if (run.mediainfoWanted) lotServeMediaInfo(run.mediainfoWanted);
+  // Fin du lot vue par cette page : le bilan, une fois. Une page ouverte sur
+  // un lot déjà fini (lot.seen vide) n'en refait pas.
+  if (lot.seen && lot.seen !== "done" && run.state === "done") {
+    const counts = {};
+    for (const e of lot.entries) counts[e.state] = (counts[e.state] || 0) + 1;
+    lot.tab = run.options.sim ? "simulated" : counts.published ? "published" : "review";
     lotRender();
-    lotProgress("Lot : " + (lot.done + 1) + " / " + lot.total, e.name);
-    try {
-      await processEntry(e, opts);
-    } catch (err) {
-      if (err.message === "session") break;
-      await decide(e, "error", err.message);
-    }
-    if (opts.waitCheck && !opts.sim && e.state === "published" && e.job) {
-      try {
-        await waitChecked(e);
-      } catch (err) {
-        if (err.message === "session") break;
-      }
-    }
-    lot.done++;
-    // Le site n'aime pas les rafales : une pause entre deux publications.
-    if (!opts.sim && e.state === "published") {
-      for (let i = 0; i < 7 && !lot.stop; i++) await wait(1000);
-    }
+    const started = run.options.seedLater && !run.options.sim && run.published ? " Leurs seeds démarrent maintenant." : "";
+    toast((run.stopped ? "Lot arrêté." : "Lot terminé : " + (run.options.sim ? (counts.simulated || 0) + " seraient publiées" : run.published + " publiées") + ", " + (counts.review || 0) + " à vérifier.") + started, "ok");
   }
+  lot.seen = run.state;
 }
 
-// Pour le signal de présence (app.js) : un lot tourne-t-il ?
-window.lotRunning = () => lot.running;
+// Suivi du lot : chaque seconde tant qu'il tourne, toutes les 5 s quand le
+// Lot est affiché, sinon rien (le statut d'app.js voit encore les demandes
+// de MediaInfo).
+async function lotPoll() {
+  clearTimeout(lot.poll);
+  lot.poll = null;
+  try {
+    applyRun(await api("/ui/batch/state"));
+  } catch (e) {
+    if (e.message === "session") return;
+  }
+  const shown = $("#view-batch") && !$("#view-batch").classList.contains("hidden");
+  if (lot.running) lotPollSoon(1000);
+  else if (shown) lotPollSoon(5000);
+}
+
+function lotPollSoon(ms) {
+  clearTimeout(lot.poll);
+  lot.poll = setTimeout(lotPoll, ms);
+}
+
+// MediaInfo demandé par D3X : une seule fois par publication, par cette page.
+// Illisible, la réponse vide part quand même : D3X range la release « à
+// vérifier » au lieu d'attendre.
+const miServed = new Set();
+async function lotServeMediaInfo(req) {
+  if (!req || miServed.has(req.jobId) || !window.mediaInfoRead) return;
+  miServed.add(req.jobId);
+  let text = "";
+  try { text = await window.mediaInfoRead(req.jobId, req.fileIndex, req.size); } catch (e) { text = ""; }
+  try { await api("/ui/pub/" + req.jobId + "/mediainfo", { text }); } catch (e) { /* une autre page a répondu, ou le lot est arrêté */ }
+}
+window.lotServeMediaInfo = lotServeMediaInfo;
 
 window.batchShow = async (on) => {
   lotBar();
@@ -688,6 +468,7 @@ window.batchShow = async (on) => {
     try { const s = await api("/ui/state"); $("#b-path").value = s.lastDir || ""; } catch (e) { /* rien */ }
   }
   lotRefresh();
+  lotPoll();
 };
 
 // Retour sur le Lot : états relus dans le journal. Une release ouverte par
@@ -718,7 +499,7 @@ function bindBatch() {
   $("#b-path").addEventListener("keydown", (e) => { if (e.key === "Enter") lotList(); });
   $("#b-browse").addEventListener("click", () => lotBrowse($("#b-path").value));
   $("#b-run").addEventListener("click", lotRun);
-  $("#b-stop").addEventListener("click", () => { lot.stop = true; toast("Le lot s'arrête après la release en cours."); });
+  $("#b-stop").addEventListener("click", lotStop);
   $("#b-uncheck").addEventListener("click", () => {
     for (const e of lot.entries) e.checked = false;
     lotRender();

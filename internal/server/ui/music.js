@@ -313,17 +313,4 @@ function bindMusic() {
   });
 }
 
-// ---------- Lot ----------
-
-// Album pour le lot : l'édition n'est retenue que si elle est certaine (tags,
-// ou mêmes pistes et mêmes durées, une seule œuvre).
-async function lotAlbumWork(j) {
-  try {
-    const r = await api("/ui/pub/" + j.id + "/mb/decide", {});
-    return r.certain && r.best ? { mb: r.best, why: r.reason } : { mb: null, why: r.reason || "album introuvable sur MusicBrainz" };
-  } catch (e) {
-    return { mb: null, why: "MusicBrainz injoignable (" + e.message + ")" };
-  }
-}
-
 document.addEventListener("DOMContentLoaded", bindMusic);

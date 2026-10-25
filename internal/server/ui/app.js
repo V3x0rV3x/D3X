@@ -901,6 +901,9 @@ let lastStatus = null;
 
 function renderStatus(st) {
   lastStatus = st;
+  // Un lot tourne dans D3X et attend un MediaInfo : n'importe quel onglet
+  // ouvert le calcule (sans binaire mediainfo côté D3X).
+  if (st.lot && st.lot.mediainfoWanted && window.lotServeMediaInfo) window.lotServeMediaInfo(st.lot.mediainfoWanted);
   const sc = st.scan;
   const running = sc.phase === "list" || sc.phase === "read" || sc.phase === "match";
   $("#scan").classList.toggle("hidden", running || st.applying);
@@ -1688,10 +1691,7 @@ function drawn() {
 async function ping() {
   try {
     const shown = document.visibilityState === "visible" && (await drawn());
-    // lot=1 : un lot tourne depuis cette page, D3X l'attend même si elle se tait
-    // (fenêtre endormie par le navigateur, écran éteint).
-    const lotOn = window.lotRunning && window.lotRunning();
-    const r = await fetch("/ui/ping?id=" + PAGE_ID + "&shown=" + (shown ? 1 : 0) + "&lot=" + (lotOn ? 1 : 0));
+    const r = await fetch("/ui/ping?id=" + PAGE_ID + "&shown=" + (shown ? 1 : 0));
     if (r.status === 200 && (await r.json()).close) window.close();
   } catch (e) { /* rien */ }
 }
