@@ -99,12 +99,23 @@ func TestTexts(t *testing.T) {
 }
 
 func TestPickNfo(t *testing.T) {
-	files := []File{{Rel: "Rel/Rel.nfo", Size: 100}, {Rel: "Rel/Sub/ep.nfo", Size: 50}, {Rel: "Rel/autre.nfo", Size: 10}, {Rel: "Rel/gros.nfo", Size: 300000}}
-	if i := pickNfo("Rel", files); i != 0 {
-		t.Errorf("index %d", i)
-	}
-	if i := pickNfo("Rel", nil); i != -1 {
-		t.Errorf("sans nfo : %d", i)
+	for _, c := range []struct {
+		nom   string
+		files []File
+		want  int
+	}{
+		{"nommé, pas en premier", []File{{Rel: "D/autre.nfo", Size: 10}, {Rel: "D/Film.nfo", Size: 100}}, 1},
+		{"seul un plus profond", []File{{Rel: "D/a.mkv", Size: 9}, {Rel: "D/Sub/ep.nfo", Size: 50}}, 1},
+		{"le moins profond d'abord", []File{{Rel: "D/Sub/Film.nfo", Size: 50}, {Rel: "D/autre.nfo", Size: 10}}, 1},
+		{"trop gros", []File{{Rel: "D/Film.nfo", Size: 262145}}, -1},
+		{"limite 256 Kio", []File{{Rel: "D/Film.nfo", Size: 262144}}, 0},
+		{"taille nulle", []File{{Rel: "D/Film.nfo", Size: 0}}, -1},
+		{"aucun nfo", []File{{Rel: "D/a.mkv", Size: 9}}, -1},
+		{"liste vide", nil, -1},
+	} {
+		if got := pickNfo("Film", c.files); got != c.want {
+			t.Errorf("%s : %d, attendu %d", c.nom, got, c.want)
+		}
 	}
 }
 
@@ -134,5 +145,52 @@ func TestDecodeNfoDetails(t *testing.T) {
 	}
 	if got := pubErr("validation", `{"field":3,"existing":{"id":42}}`); got != "un champ de la fiche est refusé : 3. Fiche existante : https://v3x.club/torrents/42" {
 		t.Errorf("nombres : %q", got)
+	}
+}
+
+func TestTextUnmarshal(t *testing.T) {
+	for in, want := range map[string]Text{`"x"`: "x", `42`: "42", `1.5`: "1.5", `null`: "", `true`: "", `{}`: "", `[]`: ""} {
+		var got Text
+		if err := got.UnmarshalJSON([]byte(in)); err != nil || got != want {
+			t.Errorf("%s : %q (%v), attendu %q", in, got, err, want)
+		}
+	}
+}
+
+func TestBlockingEnAvertissements(t *testing.T) {
+	if len(blocking) != len(warnings) {
+		t.Fatalf("%d bloquants pour %d avertissements", len(blocking), len(warnings))
+	}
+	for k := range blocking {
+		if _, ok := warnings[k]; !ok {
+			t.Errorf("%q bloquant sans texte", k)
+		}
+	}
+}
+
+func TestCertainWorkSansAnnee(t *testing.T) {
+	w := []Work{{Type: "movie", ID: "1", Title: "Demonstration"}}
+	if r := certainWork(w, "Demonstration", "", false); r == nil || r.ID != "1" {
+		t.Errorf("sans année : %+v", r)
+	}
+	w[0].Year = "2024"
+	if r := certainWork(w, "Demonstration", "", false); r == nil {
+		t.Errorf("année du titre absente : %+v", r)
+	}
+}
+
+func TestGoneTextVariantes(t *testing.T) {
+	for _, c := range []struct {
+		g    v3x.Gone
+		want string
+	}{
+		{v3x.Gone{Status: "deleted"}, "une fiche V3X de ce contenu a été retirée"},
+		{v3x.Gone{Status: "archived"}, "une fiche V3X de ce contenu a été archivée"},
+		{v3x.Gone{Status: "trumped", Reason: "mieux"}, "une fiche V3X de ce contenu a été remplacée par une meilleure version"},
+		{v3x.Gone{Status: "archived", Own: true}, "une fiche V3X de ce contenu a été archivée"},
+	} {
+		if got := goneText(&c.g); got != c.want {
+			t.Errorf("%+v : %q", c.g, got)
+		}
 	}
 }

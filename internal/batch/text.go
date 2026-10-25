@@ -13,45 +13,6 @@ import (
 	"github.com/V3x0rV3x/D3X/internal/v3x"
 )
 
-// Text : un champ du site qui arrive en chaîne ou en nombre (année, id,
-// saison), gardé tel quel en texte ; null ou absent : vide.
-type Text string
-
-func (t *Text) UnmarshalJSON(b []byte) error {
-	s := strings.TrimSpace(string(b))
-	switch {
-	case s == "null" || s == "":
-		*t = ""
-	case s[0] == '"':
-		var v string
-		if err := json.Unmarshal(b, &v); err != nil {
-			return err
-		}
-		*t = Text(v)
-	default:
-		*t = Text(s)
-	}
-	return nil
-}
-
-func (t Text) String() string { return string(t) }
-
-// Work : une œuvre TMDB (résultat de recherche du site, ou série mémorisée).
-type Work struct {
-	Type          string  `json:"type"` // movie, tv
-	ID            Text    `json:"id"`
-	Title         string  `json:"title"`
-	OriginalTitle string  `json:"originalTitle,omitempty"`
-	Year          Text    `json:"year,omitempty"`
-	PosterURL     *string `json:"posterUrl"`
-}
-
-// File : un fichier d'une publication (chemin dans la release, taille).
-type File struct {
-	Rel  string
-	Size int64
-}
-
 // ---------- œuvre certaine (batch.js) ----------
 
 func yearNum(s Text) (float64, bool) {
@@ -94,6 +55,10 @@ func nameWithToken(name, token string) string {
 		return name
 	}
 	codec := strings.SplitN(token, " ", 2)[0]
+	if codec == "" {
+		// Le JS insérerait la qualité au hasard d'un séparateur : on l'ajoute à la fin.
+		return name + " [" + token + "]"
+	}
 	spaced := strings.IndexFunc(name, unicode.IsSpace) >= 0
 	sep := "-"
 	if spaced {
@@ -108,7 +73,7 @@ func nameWithToken(name, token string) string {
 	re := regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])` + regexp.QuoteMeta(codec) + `([^A-Za-z0-9]|$)`)
 	if loc := re.FindStringSubmatchIndex(name); loc != nil {
 		// Le codec et ce qui le précède sont remplacés ; le reste est gardé.
-		return name[:loc[2]] + name[loc[2]:loc[3]] + styled + name[loc[4]:]
+		return name[:loc[3]] + styled + name[loc[4]:]
 	}
 	if spaced {
 		return name + " [" + token + "]"
@@ -203,6 +168,7 @@ func stripExt(name string, single bool) string {
 
 // ---------- textes (batch.js, publish.js) ----------
 
+// dupText : d ne doit pas être nil (les appelants vérifient).
 func dupText(d *v3x.Match) string {
 	s := "déjà sur V3X : " + d.Name
 	if d.Kind == "exact" || d.Kind == "self" {
@@ -211,6 +177,7 @@ func dupText(d *v3x.Match) string {
 	return s + " · la Médiathèque la met en seed avec ces fichiers"
 }
 
+// goneText : g ne doit pas être nil (les appelants vérifient).
 func goneText(g *v3x.Gone) string {
 	verb := "retirée"
 	switch g.Status {
@@ -303,7 +270,11 @@ var reSeason = regexp.MustCompile(`(?i)\bS\d{1,2}(E\d{1,3})?\b`)
 
 var reNotWord = regexp.MustCompile(`[^a-z0-9]+`)
 
-// words : les mots d'un titre (minuscules, sans accents ni apostrophes), ceux
+// words : les mots d'un titre comme la page les compte. names.Words et
+// names.Similarity ne sont pas réutilisés : ils gardent les chiffres isolés et
+// les lettres non latines, que la page écarte, et certainWork doit rendre le
+// même verdict qu'elle.
+// Détail : les mots d'un titre (minuscules, sans accents ni apostrophes), ceux
 // d'un seul caractère écartés. Même découpage que la page.
 func words(s string) map[string]bool {
 	s = strings.NewReplacer("'", "", "’", "").Replace(names.Ascii(s))
