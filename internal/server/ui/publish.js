@@ -105,7 +105,7 @@ async function loadSeries() {
       localStorage.removeItem(SERIES_PICKS);
     } catch (e) { /* on réessaiera au prochain chargement */ }
   }
-  try { seriesCache = (await api("/ui/series")) || {}; } catch (e) { /* cache vide */ }
+  try { seriesCache = { ...((await api("/ui/series")) || {}), ...seriesCache }; } catch (e) { /* cache vide */ }
 }
 
 function rememberSeries(title, it) {

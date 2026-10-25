@@ -72,14 +72,28 @@ func rememberSeries(title string, w batch.Work) {
 }
 
 func rememberSeriesKey(key string, w batch.Work) {
-	if w.Type != "tv" || len(key) < 2 {
-		return
-	}
+	rememberSeriesKeys(map[string]batch.Work{key: w})
+}
+
+// rememberSeriesKeys retient plusieurs séries d'un coup : un verrou, une
+// lecture, une écriture. Seules les séries (pas les films) à clé assez longue
+// sont gardées.
+func rememberSeriesKeys(in map[string]batch.Work) {
 	seriesMu.Lock()
 	defer seriesMu.Unlock()
 	m := loadSeries()
-	m[key] = seriesPick{Work: w, At: time.Now().UTC()}
-	_ = saveSeries(m)
+	now := time.Now().UTC()
+	n := 0
+	for k, w := range in {
+		if w.Type != "tv" || len(k) < 2 {
+			continue
+		}
+		m[k] = seriesPick{Work: w, At: now}
+		n++
+	}
+	if n > 0 {
+		_ = saveSeries(m)
+	}
 }
 
 // rememberedSeries : la série retenue pour ce titre, nil sinon.
@@ -118,9 +132,7 @@ func (s *Server) routesSeries() {
 		if !decode(w, r, 1<<20, &in) {
 			return
 		}
-		for k, v := range in.Entries {
-			rememberSeriesKey(k, v)
-		}
+		rememberSeriesKeys(in.Entries)
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	})
 }

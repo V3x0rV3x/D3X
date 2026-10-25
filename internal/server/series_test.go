@@ -37,4 +37,14 @@ func TestSeriesMemory(t *testing.T) {
 	if rememberedSeries("Power") != nil {
 		t.Fatal("la plus ancienne devait partir")
 	}
+	// La plus récente (i=300 : "SerieOl") reste, et il en reste exactement 300.
+	if rememberedSeries("SerieOl") == nil {
+		t.Fatal("la plus récente devait rester")
+	}
+	seriesMu.Lock()
+	n := len(loadSeries())
+	seriesMu.Unlock()
+	if n != 300 {
+		t.Fatalf("%d entrées, 300 attendues", n)
+	}
 }
