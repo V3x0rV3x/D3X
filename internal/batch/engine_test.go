@@ -38,6 +38,7 @@ type fakeDeps struct {
 	prepared   func(key string) (*Prepared, bool)
 	series     func(title string) *Work
 	mediainfo  func(ctx context.Context, req mediainfo.Request) (string, error)
+	pubRead    func(id string, index int) ([]byte, int64, error)
 	cancelled  []string
 	dropped    []string
 }
@@ -79,27 +80,42 @@ func (d *fakeDeps) PubPublish(id string, fields map[string]string) error {
 	}
 	return d.pubPublish(id, fields)
 }
-func (d *fakeDeps) PubRead(context.Context, string, int, int64, int64) ([]byte, int64, error) {
-	return nil, 0, errors.New("pas de lecture")
+func (d *fakeDeps) PubRead(_ context.Context, id string, i int, off, n int64) ([]byte, int64, error) {
+	if d.pubRead == nil {
+		return nil, 0, errors.New("pas de lecture")
+	}
+	return d.pubRead(id, i)
 }
 func (d *fakeDeps) PubFilePath(string, int) (string, bool) { return "/x/f.mkv", true }
-func (d *fakeDeps) Context(context.Context) (*Context, error) {
+func (d *fakeDeps) Context(ctx context.Context) (*Context, error) {
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	if d.context == nil {
 		return &Context{}, nil
 	}
 	return d.context()
 }
-func (d *fakeDeps) Fiche(_ context.Context, jobID string, in FicheInput) (*Fiche, error) {
+func (d *fakeDeps) Fiche(ctx context.Context, jobID string, in FicheInput) (*Fiche, error) {
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	if d.fiche == nil {
 		return &Fiche{}, nil
 	}
 	return d.fiche(jobID, in)
 }
-func (d *fakeDeps) TMDBSearch(_ context.Context, q string) ([]Work, error) {
+
+// Comme un vrai appel HTTP : un contexte coupé pendant l'appel le fait échouer.
+func (d *fakeDeps) TMDBSearch(ctx context.Context, q string) ([]Work, error) {
 	if d.tmdb == nil {
 		return nil, nil
 	}
-	return d.tmdb(q)
+	res, err := d.tmdb(q)
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	return res, err
 }
 func (d *fakeDeps) Redo(_ context.Context, name string, _ int64, _, _ string) (string, error) {
 	if d.redo == nil {
