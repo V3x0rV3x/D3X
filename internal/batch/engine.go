@@ -74,6 +74,9 @@ var ErrRunning = errors.New("un lot tourne déjà")
 
 // Start démarre un lot. ErrRunning si un lot tourne déjà.
 func (e *Engine) Start(spec Spec) (*Run, error) {
+	if spec.Source != "ssh" { // tout le reste est local, comme Server.source
+		spec.Source = "local"
+	}
 	src, err := e.deps.Source(spec.Source)
 	if err != nil {
 		return nil, err

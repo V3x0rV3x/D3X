@@ -262,6 +262,17 @@ func TestEngineOneAtATime(t *testing.T) {
 	waitDone(t, e)
 }
 
+// Une source vide (ou inconnue) est locale : le MediaInfo attend « local ».
+func TestEngineSourceLocal(t *testing.T) {
+	e := New(&fakeDeps{entries: []releases.Entry{{Name: "A", Path: "/r/A", Exec: true}}})
+	if _, err := e.Start(Spec{Dir: "/r", Paths: []string{"/r/A"}}); err != nil {
+		t.Fatal(err)
+	}
+	if r := waitDone(t, e); r.Source != "local" || e.State().Source != "local" {
+		t.Fatalf("source %q, attendu local", e.State().Source)
+	}
+}
+
 func TestEngineCapsAndStop(t *testing.T) {
 	// Deux releases « publiées » par un faux chemin de publication : le plafond
 	// en nombre arrête la seconde, et Stop arrête avant la troisième.
