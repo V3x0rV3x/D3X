@@ -179,7 +179,7 @@ type Context struct {
 // HasTeam : le membre est dans une team.
 func (c *Context) HasTeam() bool {
 	t := string(c.User.Team)
-	return t != "" && t != "null" && t != "false"
+	return t != "" && t != "null" && t != "false" && t != `""`
 }
 
 // musicCategory : Audio ▸ Musique.

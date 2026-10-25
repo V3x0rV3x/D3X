@@ -1,7 +1,9 @@
 package batch
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -12,26 +14,36 @@ import (
 	"github.com/V3x0rV3x/D3X/internal/mediainfo"
 	"github.com/V3x0rV3x/D3X/internal/musicbrainz"
 	"github.com/V3x0rV3x/D3X/internal/publish"
-	"github.com/V3x0rV3x/D3X/internal/source"
 )
 
 const held = "vérifiée à 100 %, démarre à la fin du lot"
 
 func replaceHeld(s string) string { return strings.ReplaceAll(s, held, "seed lancé à la fin du lot") }
 
+// publishWait : au-delà, une publication envoyée est tenue pour sans réponse.
+const publishWait = 6 * time.Minute
+
+var errNoAnswer = errors.New("pas de réponse du site")
+
 // waitJob interroge la publication jusqu'à done. hard : l'arrêt du lot
-// n'interrompt pas l'attente (publication en cours : on attend sa fin).
-func (e *Engine) waitJob(r *Run, id string, done func(*publish.Job) bool, hard bool) (*publish.Job, error) {
+// n'interrompt pas l'attente (publication en cours : on attend sa fin, au
+// plus publishWait).
+func (e *Engine) waitJob(l *lot, id string, done func(*publish.Job) bool, hard bool) (*publish.Job, error) {
+	r := l.r
+	start := time.Now()
 	for {
 		j, ok := e.deps.PubGet(id)
-		if !ok {
-			return nil, fmt.Errorf("publication inconnue")
+		if !ok || j == nil {
+			return nil, errors.New("publication inconnue")
 		}
 		if done(j) {
 			return j, nil
 		}
-		if !hard && e.stopped() {
+		if !hard && l.stopped() {
 			return j, ErrStopped
+		}
+		if hard && time.Since(start) > publishWait {
+			return j, errNoAnswer
 		}
 		detail := ""
 		if j.State == publish.StHashing {
@@ -39,14 +51,37 @@ func (e *Engine) waitJob(r *Run, id string, done func(*publish.Job) bool, hard b
 		}
 		e.progress(fmt.Sprintf("Lot : %d / %d", r.Done+1, r.Total), detail)
 		if hard {
-			time.Sleep(700 * time.Millisecond)
-		} else if !e.sleep(700 * time.Millisecond) {
+			time.Sleep(e.poll)
+		} else if !l.sleep(e.poll) {
 			return j, ErrStopped
 		}
 	}
 }
 
+// waitReady attend la fin du hachage. Faux : le lot s'est arrêté (job
+// annulé, release laissée dans son état) ou le .torrent a échoué (erreur).
+func (e *Engine) waitReady(l *lot, en *Entry, j *publish.Job, cancel func()) (*publish.Job, bool) {
+	j2, err := e.waitJob(l, j.ID, func(x *publish.Job) bool { return x.State != publish.StHashing }, false)
+	if err == ErrStopped {
+		cancel()
+		return nil, false
+	}
+	if err != nil || j2.State != publish.StReady {
+		cancel()
+		msg := "le .torrent n'a pas pu être fabriqué"
+		if err != nil {
+			msg = err.Error()
+		} else if j2.Error != "" {
+			msg = j2.Error
+		}
+		e.decide(l.src, en, "error", msg, "")
+		return nil, false
+	}
+	return j2, true
+}
+
 // mediaInfo : pendant le hachage, par le binaire ou par une page. "" si illisible.
+// Le contexte est celui du lot : l'arrêt coupe ce calcul (une attente).
 func (e *Engine) mediaInfo(ctx context.Context, r *Run, j *publish.Job) string {
 	if j.MainFile < 0 || j.MainFile >= len(j.Files) {
 		return ""
@@ -84,11 +119,16 @@ type mbWork struct {
 	why string
 }
 
-// process traite une release, comme processEntry dans la page.
-func (e *Engine) process(ctx context.Context, r *Run, src source.Source, en *Entry) {
+// process traite une release, comme processEntry dans la page. Les appels
+// au site et à la publication prennent context.Background() (le serveur y met
+// ses délais) : l'arrêt du lot ne les coupe jamais, il ne change pas l'issue
+// de la release en cours.
+func (e *Engine) process(l *lot, en *Entry) {
+	ctx := context.Background()
+	r, src := l.r, l.src
 	o := r.Options
 	if en.State == "ready" {
-		e.processReady(ctx, r, src, en)
+		e.processReady(l, en)
 		return
 	}
 	switch {
@@ -124,10 +164,10 @@ func (e *Engine) process(ctx context.Context, r *Run, src source.Source, en *Ent
 	}
 
 	// MediaInfo pendant le hachage.
-	mi := e.mediaInfo(ctx, r, j)
+	mi := e.mediaInfo(l.ctx, r, j)
 	// Arrêt pendant une attente : le job est annulé et la release reste dans
 	// son état, sans « Erreur » ni ligne au journal (la page la marquait en erreur).
-	if e.stopped() {
+	if l.stopped() {
 		cancel()
 		return
 	}
@@ -135,6 +175,9 @@ func (e *Engine) process(ctx context.Context, r *Run, src source.Source, en *Ent
 	album := j.Audio != nil && len(j.Audio.Tracks) > 0 && !en.Video
 
 	cx, err := e.deps.Context(ctx)
+	if err == nil && cx == nil {
+		err = errors.New("contexte de publication vide")
+	}
 	if err != nil {
 		cancel()
 		e.decide(src, en, "error", err.Error(), "")
@@ -149,6 +192,8 @@ func (e *Engine) process(ctx context.Context, r *Run, src source.Source, en *Ent
 		switch {
 		case err != nil:
 			mbw = &mbWork{why: "MusicBrainz injoignable (" + err.Error() + ")"}
+		case res == nil:
+			mbw = &mbWork{why: "MusicBrainz injoignable (réponse vide)"}
 		case res.Certain && res.Best != nil:
 			mbw = &mbWork{mb: res.Best, why: res.Reason}
 		default:
@@ -169,7 +214,11 @@ func (e *Engine) process(ctx context.Context, r *Run, src source.Source, en *Ent
 			s := mc.Slug
 			in.CategorySlug = &s
 		}
-		return e.deps.Fiche(ctx, j.ID, in)
+		f, err := e.deps.Fiche(ctx, j.ID, in)
+		if err == nil && f == nil {
+			err = errors.New("fiche vide")
+		}
+		return f, err
 	}
 	f, err := ficheOf(nil)
 	if err != nil {
@@ -230,6 +279,8 @@ func (e *Engine) process(ctx context.Context, r *Run, src source.Source, en *Ent
 	}
 	// La page ne le notait que pour un film, une série ou une vidéo, et
 	// plantait sinon plus bas (work.title sur null) : ici, à vérifier, proprement.
+	// Une release ni vidéo ni album a donc aussi « œuvre TMDB incertaine », en
+	// plus de « catégorie à choisir ».
 	if work == nil && !album {
 		reasons = append(reasons, "œuvre TMDB incertaine")
 	}
@@ -283,7 +334,13 @@ func (e *Engine) process(ctx context.Context, r *Run, src source.Source, en *Ent
 			workName += " (" + string(work.Year) + ")"
 		}
 	}
-	parts := []string{catName, workName}
+	// Les parties vides sont omises (filter(Boolean) dans la page).
+	var parts []string
+	for _, s := range []string{catName, workName} {
+		if s != "" {
+			parts = append(parts, s)
+		}
+	}
 	if renamed {
 		parts = append(parts, "nom complété : "+name)
 	}
@@ -294,20 +351,8 @@ func (e *Engine) process(ctx context.Context, r *Run, src source.Source, en *Ent
 		return
 	}
 
-	j, err = e.waitJob(r, j.ID, func(x *publish.Job) bool { return x.State != publish.StHashing }, false)
-	if err == ErrStopped {
-		cancel()
-		return
-	}
-	if err != nil || j.State != publish.StReady {
-		cancel()
-		msg := "le .torrent n'a pas pu être fabriqué"
-		if err != nil {
-			msg = err.Error()
-		} else if j.Error != "" {
-			msg = j.Error
-		}
-		e.decide(src, en, "error", msg, "")
+	j, ok := e.waitReady(l, en, j, cancel)
+	if !ok {
 		return
 	}
 	ownNfo := ""
@@ -345,7 +390,7 @@ func (e *Engine) process(ctx context.Context, r *Run, src source.Source, en *Ent
 	if f.Season != "" && strings.Contains(cat.Slug, "serie") {
 		fields["season"] = string(f.Season)
 	}
-	e.publishWith(ctx, r, src, en, j, fields, summary)
+	e.publishWith(l, en, j, fields, summary)
 }
 
 func contains(list []string, s string) bool {
@@ -359,7 +404,8 @@ func contains(list []string, s string) bool {
 
 // processReady : release gardée depuis Publier, publiée avec sa fiche, sans
 // rien redécider.
-func (e *Engine) processReady(ctx context.Context, r *Run, src source.Source, en *Entry) {
+func (e *Engine) processReady(l *lot, en *Entry) {
+	r, src := l.r, l.src
 	key := src.Key(en.Path)
 	p, ok := e.deps.Prepared(key)
 	if !ok {
@@ -385,35 +431,24 @@ func (e *Engine) processReady(ctx context.Context, r *Run, src source.Source, en
 		e.decide(src, en, "duplicate", dupText(j.Duplicate), j.Duplicate.ID)
 		return
 	}
-	j, err = e.waitJob(r, j.ID, func(x *publish.Job) bool { return x.State != publish.StHashing }, false)
-	if err == ErrStopped {
-		cancel()
+	j, ok = e.waitReady(l, en, j, cancel)
+	if !ok {
 		return
 	}
-	if err != nil || j.State != publish.StReady {
-		cancel()
-		msg := "le .torrent n'a pas pu être fabriqué"
-		if err != nil {
-			msg = err.Error()
-		} else if j.Error != "" {
-			msg = j.Error
-		}
-		e.decide(src, en, "error", msg, "")
-		return
-	}
-	if e.publishWith(ctx, r, src, en, j, p.Fields, summary) {
+	if e.publishWith(l, en, j, p.Fields, summary) {
 		e.deps.DropPrepared(key)
 	}
 }
 
 // publishWith publie le job prêt avec ces champs ; vrai si V3X l'a acceptée.
-func (e *Engine) publishWith(ctx context.Context, r *Run, src source.Source, en *Entry, j *publish.Job, fields map[string]string, summary string) bool {
+func (e *Engine) publishWith(l *lot, en *Entry, j *publish.Job, fields map[string]string, summary string) bool {
+	src := l.src
 	if err := e.deps.PubPublish(j.ID, fields); err != nil {
 		e.decide(src, en, "error", err.Error(), "")
 		return false
 	}
 	// L'envoi est parti : on attend sa réponse même si le lot s'arrête.
-	j2, err := e.waitJob(r, j.ID, func(x *publish.Job) bool { return x.State != publish.StPublishing }, true)
+	j2, err := e.waitJob(l, j.ID, func(x *publish.Job) bool { return x.State != publish.StPublishing }, true)
 	if err != nil {
 		e.decide(src, en, "error", err.Error(), "")
 		return false
@@ -427,8 +462,11 @@ func (e *Engine) publishWith(ctx context.Context, r *Run, src source.Source, en 
 		name = en.Name
 	}
 	var reqs []byte
-	if raw, err := e.deps.RequestsFor(ctx, name); err == nil && len(raw) > 2 {
-		reqs = raw
+	// Seulement une liste non vide de demandes.
+	if raw, err := e.deps.RequestsFor(context.Background(), name); err == nil {
+		if t := bytes.TrimSpace(raw); len(t) > 2 && t[0] == '[' {
+			reqs = t
+		}
 	}
 	status := "en attente de validation"
 	if j2.Published.Status == "active" {
@@ -449,10 +487,11 @@ func (e *Engine) publishWith(ctx context.Context, r *Run, src source.Source, en 
 
 // waitChecked : option « Attendre la vérification » : la suivante n'est prise
 // qu'une fois celle-ci ajoutée au client et vérifiée. « Arrêter » coupe l'attente.
-func (e *Engine) waitChecked(r *Run, en *Entry) {
+func (e *Engine) waitChecked(l *lot, en *Entry) {
+	r := l.r
 	for {
 		j, ok := e.deps.PubGet(en.Job)
-		if !ok {
+		if !ok || j == nil {
 			return
 		}
 		s := j.Seed
@@ -472,7 +511,7 @@ func (e *Engine) waitChecked(r *Run, en *Entry) {
 			}
 			return
 		}
-		if e.stopped() {
+		if l.stopped() {
 			return
 		}
 		pct := ""
@@ -480,7 +519,7 @@ func (e *Engine) waitChecked(r *Run, en *Entry) {
 			pct = " (" + strconv.Itoa(int(math.Round(s.Progress*100))) + " %)"
 		}
 		e.progress(fmt.Sprintf("Lot : %d / %d", r.Done+1, r.Total), "ton client vérifie "+en.Name+pct+"…")
-		if !e.sleep(2 * time.Second) {
+		if !l.sleep(e.checkPoll) {
 			return
 		}
 	}

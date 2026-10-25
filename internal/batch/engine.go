@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strconv"
 	"sync"
 	"time"
@@ -16,8 +17,10 @@ import (
 // étapes que la vue Publier, dans D3X lui-même (la page ne fait que
 // démarrer, arrêter et suivre). Un seul lot à la fois.
 type Engine struct {
-	deps  Deps
-	pause time.Duration // entre deux publications (le site n'aime pas les rafales)
+	deps      Deps
+	pause     time.Duration // entre deux publications (le site n'aime pas les rafales)
+	poll      time.Duration // entre deux lectures d'une publication (hachage, envoi)
+	checkPoll time.Duration // entre deux lectures de la vérification du client
 
 	mu     sync.Mutex
 	run    *Run
@@ -27,7 +30,37 @@ type Engine struct {
 }
 
 // New prépare le moteur.
-func New(d Deps) *Engine { return &Engine{deps: d, pause: 7 * time.Second} }
+func New(d Deps) *Engine {
+	return &Engine{deps: d, pause: 7 * time.Second, poll: 700 * time.Millisecond, checkPoll: 2 * time.Second}
+}
+
+// lot : le run en cours tel que la boucle le voit. Rien n'y est réassigné
+// pendant le run : la boucle le lit sans le verrou de l'Engine.
+type lot struct {
+	r     *Run
+	src   source.Source
+	ctx   context.Context // coupé par l'arrêt : sert au seul calcul du MediaInfo
+	stopc <-chan struct{}
+}
+
+func (l *lot) stopped() bool {
+	select {
+	case <-l.stopc:
+		return true
+	default:
+		return false
+	}
+}
+
+// sleep attend d, ou l'arrêt.
+func (l *lot) sleep(d time.Duration) bool {
+	select {
+	case <-time.After(d):
+		return true
+	case <-l.stopc:
+		return false
+	}
+}
 
 // ErrStopped : le membre a arrêté le lot pendant une attente.
 var ErrStopped = errors.New("lot arrêté")
@@ -74,10 +107,11 @@ func (e *Engine) Start(spec Spec) (*Run, error) {
 		}
 	}
 	rctx, rcancel := context.WithCancel(context.Background())
-	e.run, e.src, e.stopc, e.cancel = r, src, make(chan struct{}), rcancel
+	stopc := make(chan struct{})
+	e.run, e.src, e.stopc, e.cancel = r, src, stopc, rcancel
 	out := e.copyLocked()
 	e.mu.Unlock()
-	go e.loop(rctx, r, src)
+	go e.loop(&lot{r: r, src: src, ctx: rctx, stopc: stopc})
 	return out, nil
 }
 
@@ -135,15 +169,6 @@ func (e *Engine) copyLocked() *Run {
 	return &c
 }
 
-func (e *Engine) stopped() bool {
-	select {
-	case <-e.stopc:
-		return true
-	default:
-		return false
-	}
-}
-
 // set modifie le run sous verrou.
 func (e *Engine) set(f func(r *Run)) {
 	e.mu.Lock()
@@ -153,16 +178,6 @@ func (e *Engine) set(f func(r *Run)) {
 
 func (e *Engine) progress(label, detail string) {
 	e.set(func(r *Run) { r.Label, r.Detail = label, detail })
-}
-
-// sleep attend d, ou l'arrêt.
-func (e *Engine) sleep(d time.Duration) bool {
-	select {
-	case <-time.After(d):
-		return true
-	case <-e.stopc:
-		return false
-	}
 }
 
 // decide range la release et le note au journal (comme la route decision).
@@ -177,13 +192,19 @@ const gib = float64(1 << 30)
 
 func fmtNum(f float64) string { return strconv.FormatFloat(f, 'f', -1, 64) }
 
-func (e *Engine) loop(ctx context.Context, r *Run, src source.Source) {
+// loop traite les releases une par une. L'arrêt coupe les attentes, jamais
+// un appel au site en cours : la release en cours finit comme si de rien
+// n'était (seuls le hachage et le MediaInfo, des attentes, l'interrompent :
+// le job est alors annulé et la release laissée dans son état).
+func (e *Engine) loop(l *lot) {
+	r := l.r
 	o := r.Options
 	hold := o.SeedLater && !o.Sim
-	holdDone := make(chan struct{})
+	holdDone, holdStopped := make(chan struct{}), make(chan struct{})
 	if hold {
 		e.deps.HoldPublished(5 * time.Minute)
 		go func() {
+			defer close(holdStopped)
 			t := time.NewTicker(time.Minute)
 			defer t.Stop()
 			for {
@@ -200,7 +221,7 @@ func (e *Engine) loop(ctx context.Context, r *Run, src source.Source) {
 		if !todo(en) {
 			continue
 		}
-		if e.stopped() {
+		if l.stopped() {
 			break
 		}
 		if o.Max > 0 && r.Published >= o.Max && !o.Sim {
@@ -215,17 +236,20 @@ func (e *Engine) loop(ctx context.Context, r *Run, src source.Source) {
 		}
 		e.set(func(r *Run) { r.Current = en.Path })
 		e.progress(fmt.Sprintf("Lot : %d / %d", r.Done+1, r.Total), en.Name)
-		e.process(ctx, r, src, en)
+		e.processSafe(l, en)
 		if o.WaitCheck && !o.Sim && en.State == "published" && en.Job != "" {
-			e.waitChecked(r, en)
+			e.waitChecked(l, en)
 		}
 		e.set(func(r *Run) { r.Done++ })
 		if !o.Sim && en.State == "published" {
-			e.sleep(e.pause)
+			l.sleep(e.pause)
 		}
 	}
 	if hold {
+		// Le renouvellement du bail est fini avant qu'on le lève : un dernier
+		// « 5 min » ne passe pas après le « 0 ».
 		close(holdDone)
+		<-holdStopped
 		e.deps.HoldPublished(0)
 	}
 	e.set(func(r *Run) {
@@ -239,4 +263,16 @@ func (e *Engine) loop(ctx context.Context, r *Run, src source.Source) {
 		r.State, r.Current, r.Label, r.Detail, r.EndedAt = StDone, "", "", "", time.Now()
 		e.cancel() // plus rien n'attend sur le contexte du lot
 	})
+}
+
+// processSafe : une panique sur une release la met en erreur et le lot
+// continue (comme le try/catch de la page autour de processEntry).
+func (e *Engine) processSafe(l *lot, en *Entry) {
+	defer func() {
+		if p := recover(); p != nil {
+			log.Printf("lot : panique sur %s : %v", en.Name, p)
+			e.decide(l.src, en, "error", fmt.Sprint(p), "")
+		}
+	}()
+	e.process(l, en)
 }
