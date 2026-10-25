@@ -32,13 +32,21 @@ func (s *Server) SetUpdateKey(pub ed25519.PublicKey) {
 }
 
 // pageSilence : une fenêtre réduite ne ralentit ses signaux qu'à un par
-// minute.
-const pageSilence = 3 * time.Minute
+// minute. lotSilence : pendant un lot, une fenêtre que le navigateur a
+// endormie (écran éteint) se réveille plus tard ; D3X l'attend.
+const (
+	pageSilence = 3 * time.Minute
+	lotSilence  = 12 * time.Hour
+)
 
 // PageGone dit si la page a été fermée : elle a dit au revoir sans revenir
 // depuis 8 s (un rechargement revient tout de suite), ou elle ne donne plus
-// signe de vie depuis 3 min. Faux tant que la page n'est jamais venue. Le
-// lot ne dépend plus de la page : il tourne dans D3X (voir Busy).
+// signe de vie depuis 3 min. Faux tant que la page n'est jamais venue.
+// Pendant un lot (qui tourne, s'arrête ou attend le MediaInfo d'une page),
+// le silence seul ne compte qu'au bout de 12 h (karat, 24/10/26 : écran
+// éteint, le navigateur endort la fenêtre) ; l'au revoir, lui, compte
+// toujours : sans binaire mediainfo, le lot ne peut plus avancer sans page,
+// et D3X s'arrête comme avant.
 func (s *Server) PageGone() bool {
 	gone, _ := s.pageGone()
 	return gone
@@ -59,8 +67,20 @@ func (s *Server) pageGone() (bool, string) {
 	if bye > 0 && bye >= last && now-bye > int64(8*time.Second) {
 		return true, "la page a dit au revoir"
 	}
+	silence := pageSilence
+	if s.lotRunning() {
+		silence = lotSilence
+	}
 	quiet := time.Duration(now - last)
-	return quiet > pageSilence, "page muette depuis " + quiet.Round(time.Second).String()
+	return quiet > silence, "page muette depuis " + quiet.Round(time.Second).String()
+}
+
+// lotRunning : un lot tourne, s'arrête ou attend le MediaInfo d'une page.
+func (s *Server) lotRunning() bool {
+	if s.lotRunningFn != nil {
+		return s.lotRunningFn()
+	}
+	return s.lot != nil && s.lot.Running()
 }
 
 // LotAdvancing : un lot tourne et avance (pas en attente d'une page pour le

@@ -108,3 +108,27 @@ func TestPageGoneWithoutLot(t *testing.T) {
 		t.Fatalf("page fermée : partie attendue (%q)", s.GoneWhy())
 	}
 }
+
+// Pendant un lot (karat, 24/10/26), le navigateur peut endormir la fenêtre
+// (écran éteint) : 4 min de silence ne valent pas fermeture. L'au revoir,
+// lui, compte toujours.
+func TestPageGoneDuringLot(t *testing.T) {
+	running := true
+	s := &Server{lotRunningFn: func() bool { return running }}
+	s.lastSeen.Store(time.Now().Add(-4 * time.Minute).UnixNano())
+	if s.PageGone() {
+		t.Fatal("4 min de silence pendant un lot : la page n'est pas partie")
+	}
+	running = false
+	if !s.PageGone() {
+		t.Fatal("4 min de silence sans lot : page partie attendue")
+	}
+
+	running = true
+	t0 := time.Now().Add(-20 * time.Second).UnixNano()
+	s.lastSeen.Store(t0)
+	s.byeAt.Store(time.Now().Add(-10 * time.Second).UnixNano())
+	if !s.PageGone() || !strings.Contains(s.GoneWhy(), "au revoir") {
+		t.Fatalf("au revoir pendant un lot : partie attendue (%q)", s.GoneWhy())
+	}
+}

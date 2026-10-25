@@ -83,6 +83,8 @@ type Server struct {
 	lot    *batch.Engine      // le lot (publication par lot), dans D3X lui-même
 	mi     *mediainfo.Chooser // MediaInfo : binaire s'il existe, sinon une page
 	miPage *mediainfo.Page
+	// lotRunningFn remplace s.lot.Running dans les tests (nil sinon).
+	lotRunningFn func() bool
 
 	ssh     *remote.Client // seedbox connectée (nil sinon)
 	sshSys  string
