@@ -114,7 +114,7 @@ func TestSimilarity(t *testing.T) {
 		want float64
 	}{
 		{"Toy Story 3", "Toy Story 4", 1}, {"Rocky 2", "Rocky", 1}, {"Россия", "Россия", 0},
-		{"L'Été", "Lete", 1}, {"", "x", 0},
+		{"L'Été", "Lete", 1}, {"Ve\u0301rite\u0301 cache\u0301e", "Vérité cachée", 1}, {"", "x", 0},
 	} {
 		if got := similarity(c.a, c.b); got != c.want {
 			t.Errorf("similarity(%q, %q) = %v, attendu %v", c.a, c.b, got, c.want)

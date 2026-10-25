@@ -97,6 +97,9 @@ var ascii = map[rune]rune{
 func Ascii(s string) string {
 	var b strings.Builder
 	for _, r := range strings.ToLower(s) {
+		if r >= 0x300 && r <= 0x36F {
+			continue // signe combinant (texte déjà décomposé)
+		}
 		if r == 'İ' {
 			r = 'i'
 		}
