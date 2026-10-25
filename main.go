@@ -245,7 +245,8 @@ func run(port int, window bool) error {
 				}
 				tick = now
 				// Lot en cours : Windows ne met pas le PC en veille de lui-même.
-				// Une page muette n'avance plus son lot : la veille revient.
+				// Un lot en attente d'une page pour le MediaInfo n'avance plus :
+				// la veille revient.
 				if on := srv.LotAdvancing(); desktop.KeepAwake(on) {
 					if on {
 						log.Println("lot en cours : mise en veille automatique retenue")
@@ -340,6 +341,7 @@ func run(port int, window bool) error {
 
 	if desktop.HasTray {
 		desktop.Tray(func() {}, func() { showWindow() }, func() {
+			srv.StopLot() // un lot s'arrête après la release en cours
 			if srv.Busy() {
 				desktop.MessageBox("D3X", "D3X termine d'abord ce qu'il a en cours (ajouts, vérifications ou publication), puis s'arrêtera.")
 				go func() {
@@ -413,8 +415,10 @@ func serve(addr string) error {
 	case <-restarted:
 		return nil
 	case <-stop:
-		// docker stop : on laisse finir ce qui est en cours (dans la limite du
-		// délai de Docker), sans couper un ajout au milieu.
+		// docker stop : le lot s'arrête après la release en cours, et on laisse
+		// finir ce qui est en route (dans la limite du délai de Docker), sans
+		// couper un ajout au milieu.
+		srv.StopLot()
 		for i := 0; i < 8 && srv.Busy(); i++ {
 			time.Sleep(time.Second)
 		}
