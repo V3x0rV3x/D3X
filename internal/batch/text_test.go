@@ -107,3 +107,32 @@ func TestPickNfo(t *testing.T) {
 		t.Errorf("sans nfo : %d", i)
 	}
 }
+
+func TestSimilarity(t *testing.T) {
+	for _, c := range []struct {
+		a, b string
+		want float64
+	}{
+		{"Toy Story 3", "Toy Story 4", 1}, {"Rocky 2", "Rocky", 1}, {"Россия", "Россия", 0},
+		{"L'Été", "Lete", 1}, {"", "x", 0},
+	} {
+		if got := similarity(c.a, c.b); got != c.want {
+			t.Errorf("similarity(%q, %q) = %v, attendu %v", c.a, c.b, got, c.want)
+		}
+	}
+}
+
+func TestDecodeNfoDetails(t *testing.T) {
+	if got := decodeNfo([]byte{0xFF}); got != "\u00a0" {
+		t.Errorf("cp437 0xFF : %q", got)
+	}
+	if got := decodeNfo([]byte("\xEF\xBB\xBFNFO")); got != "NFO" {
+		t.Errorf("BOM : %q", got)
+	}
+	if got := nameWithToken("FLAC-Artiste-Album", "FLAC 16bit-44.1kHz"); got != "FLAC-16bit-44.1kHz-Artiste-Album" {
+		t.Errorf("codec au début : %q", got)
+	}
+	if got := pubErr("validation", `{"field":3,"existing":{"id":42}}`); got != "un champ de la fiche est refusé : 3. Fiche existante : https://v3x.club/torrents/42" {
+		t.Errorf("nombres : %q", got)
+	}
+}

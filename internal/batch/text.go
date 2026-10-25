@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/V3x0rV3x/D3X/internal/names"
@@ -71,7 +72,7 @@ func certainWork(results []Work, title string, year Text, isSeries bool) *Work {
 		if ry, has := yearNum(r.Year); hasYear && has && math.Abs(ry-y) > 1 {
 			continue
 		}
-		if math.Max(names.Similarity(title, r.Title), names.Similarity(title, r.OriginalTitle)) < 0.6 {
+		if math.Max(similarity(title, r.Title), similarity(title, r.OriginalTitle)) < 0.6 {
 			continue
 		}
 		ok = append(ok, r)
@@ -93,7 +94,7 @@ func nameWithToken(name, token string) string {
 		return name
 	}
 	codec := strings.SplitN(token, " ", 2)[0]
-	spaced := strings.ContainsAny(name, " \t")
+	spaced := strings.IndexFunc(name, unicode.IsSpace) >= 0
 	sep := "-"
 	if spaced {
 		sep = " "
@@ -107,7 +108,7 @@ func nameWithToken(name, token string) string {
 	re := regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])` + regexp.QuoteMeta(codec) + `([^A-Za-z0-9]|$)`)
 	if loc := re.FindStringSubmatchIndex(name); loc != nil {
 		// Le codec et ce qui le précède sont remplacés ; le reste est gardé.
-		return name[:loc[2]] + name[loc[2]:loc[3]] + styled + name[loc[3]+len(codec):]
+		return name[:loc[2]] + name[loc[2]:loc[3]] + styled + name[loc[4]:]
 	}
 	if spaced {
 		return name + " [" + token + "]"
@@ -120,14 +121,14 @@ func mbURL(id string) string { return "https://musicbrainz.org/release/" + id }
 // ---------- NFO (publish.js) ----------
 
 // cp437 : les 128 caractères hauts de la page de code 437 (NFO à dessins ASCII).
-const cp437 = "ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜ¢£¥₧ƒáíóúñÑªº¿⌐¬½¼¡«»░▒▓│┤╡╢╖╕╣║╗╝╜╛┐└┴┬├─┼╞╟╚╔╩╦╠═╬╧╨╤╥╙╘╒╓╫╪┘┌█▄▌▐▀αßΓπΣσµτΦΘΩδ∞φε∩≡±≥≤⌠⌡÷≈°∙·√ⁿ²■ "
+const cp437 = "ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜ¢£¥₧ƒáíóúñÑªº¿⌐¬½¼¡«»░▒▓│┤╡╢╖╕╣║╗╝╜╛┐└┴┬├─┼╞╟╚╔╩╦╠═╬╧╨╤╥╙╘╒╓╫╪┘┌█▄▌▐▀αßΓπΣσµτΦΘΩδ∞φε∩≡±≥≤⌠⌡÷≈°∙·√ⁿ²■\u00a0"
 
 var cp437Runes = []rune(cp437)
 
 // decodeNfo : UTF-8 strict, sinon CP437.
 func decodeNfo(b []byte) string {
 	if utf8.Valid(b) {
-		return string(b)
+		return strings.TrimPrefix(string(b), "\uFEFF")
 	}
 	var sb strings.Builder
 	for _, c := range b {
@@ -263,21 +264,21 @@ func pubErr(code, body string) string {
 		msg = code
 	}
 	var b struct {
-		Field    string `json:"field"`
-		Detail   string `json:"detail"`
+		Field    Text `json:"field"`
+		Detail   Text `json:"detail"`
 		Existing *struct {
-			ID string `json:"id"`
+			ID Text `json:"id"`
 		} `json:"existing"`
 	}
 	if body != "" && json.Unmarshal([]byte(body), &b) == nil {
 		if code == "validation" && b.Field != "" {
-			msg += " : " + b.Field
+			msg += " : " + string(b.Field)
 			if b.Detail != "" {
-				msg += " (" + b.Detail + ")"
+				msg += " (" + string(b.Detail) + ")"
 			}
 		}
 		if b.Existing != nil && b.Existing.ID != "" {
-			msg += ". Fiche existante : https://v3x.club/torrents/" + b.Existing.ID
+			msg += ". Fiche existante : https://v3x.club/torrents/" + string(b.Existing.ID)
 		}
 	}
 	return msg
@@ -299,3 +300,33 @@ var warnings = map[string]string{
 var blocking = map[string]bool{"mediainfo_missing": true, "mediainfo_not_measured": true, "resolution_too_low": true, "name_missing_gpu": true, "gpu_name_conflict": true, "tmdb_not_found": true, "audio_naming": true, "category_unknown": true}
 
 var reSeason = regexp.MustCompile(`(?i)\bS\d{1,2}(E\d{1,3})?\b`)
+
+var reNotWord = regexp.MustCompile(`[^a-z0-9]+`)
+
+// words : les mots d'un titre (minuscules, sans accents ni apostrophes), ceux
+// d'un seul caractère écartés. Même découpage que la page.
+func words(s string) map[string]bool {
+	s = strings.NewReplacer("'", "", "’", "").Replace(names.Ascii(s))
+	out := map[string]bool{}
+	for _, w := range reNotWord.Split(s, -1) {
+		if len(w) > 1 {
+			out[w] = true
+		}
+	}
+	return out
+}
+
+// similarity : part des mots en commun (indice de Jaccard, de 0 à 1).
+func similarity(a, b string) float64 {
+	A, B := words(a), words(b)
+	if len(A) == 0 || len(B) == 0 {
+		return 0
+	}
+	n := 0
+	for w := range A {
+		if B[w] {
+			n++
+		}
+	}
+	return float64(n) / float64(len(A)+len(B)-n)
+}
