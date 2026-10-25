@@ -165,6 +165,11 @@ function lotRender() {
   const checkable = list.filter((e) => e.state !== "published" && e.state !== "duplicate" && e.state !== "error");
   $("#b-all").checked = checkable.length > 0 && checkable.every((e) => e.checked);
   $("#b-all").disabled = lot.running || checkable.length === 0;
+  // Pendant un lot, ses options et le choix du dossier sont figés : un
+  // « Lister » serait défait au prochain suivi du lot.
+  for (const id of ["#b-sim", "#b-video", "#b-fixname", "#b-waitcheck", "#b-seedlater", "#b-cap", "#b-max", "#b-maxgib", "#b-list", "#b-browse", "#b-path"]) {
+    $(id).disabled = lot.running;
+  }
   const resettable = lotResettable();
   $("#b-reset-line").classList.toggle("hidden", lot.running || resettable.length === 0);
   $("#b-reset").textContent = "Tout remettre en attente (" + resettable.length + ")";
