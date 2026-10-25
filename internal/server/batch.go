@@ -27,7 +27,6 @@ type batchEntry struct {
 func (s *Server) routesBatch() {
 	s.mux.HandleFunc("GET /ui/batch/list", s.batchList)
 	s.mux.HandleFunc("POST /ui/batch/decision", s.batchDecision)
-	s.mux.HandleFunc("POST /ui/batch/hold", s.batchHold)
 	s.mux.HandleFunc("POST /ui/batch/start", s.batchStart)
 	s.mux.HandleFunc("POST /ui/batch/stop", s.batchStop)
 	s.mux.HandleFunc("GET /ui/batch/state", s.batchState)
@@ -146,20 +145,6 @@ func (s *Server) batchList(w http.ResponseWriter, r *http.Request) {
 		out = append(out, be)
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"path": dir, "entries": out})
-}
-
-// batchHold : bail « Démarrer le seed à la fin du lot » (voir
-// crossseed.HoldPublished), renouvelé par la page tant que le lot tourne ;
-// 0 le lève.
-func (s *Server) batchHold(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		Seconds int `json:"seconds"`
-	}
-	if !decode(w, r, 1<<10, &in) {
-		return
-	}
-	s.engine.HoldPublished(time.Duration(in.Seconds) * time.Second)
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // batchDecision garde la décision du lot pour une release (à revoir, simulée,
