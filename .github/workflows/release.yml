@@ -62,6 +62,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" dist/* --title "D3X ${GITHUB_REF_NAME#v}" --generate-notes
+      # L'image part d'Alpine (binaire mediainfo) : l'étape apk de la variante
+      # arm64 tourne sous QEMU sur le runner amd64.
+      - name: QEMU (image arm64)
+        uses: docker/setup-qemu-action@v3
       - name: Image Docker
         env:
           GH_TOKEN: ${{ github.token }}

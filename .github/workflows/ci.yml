@@ -30,6 +30,10 @@ jobs:
           for t in windows/amd64 darwin/arm64 darwin/amd64 linux/amd64 linux/arm64; do
             GOOS=${t%/*} GOARCH=${t#*/} CGO_ENABLED=0 go build -trimpath -o /dev/null . || exit 1
           done
+      # L'image part d'Alpine (binaire mediainfo) : l'étape apk de la variante
+      # arm64 tourne sous QEMU sur le runner amd64.
+      - name: QEMU (image arm64)
+        uses: docker/setup-qemu-action@v3
       - name: Image Docker (construite et lancée, pas publiée)
         run: |
           set -e
