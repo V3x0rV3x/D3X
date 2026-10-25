@@ -8,6 +8,8 @@ func TestAscii(t *testing.T) {
 		"Ve\u0301rite\u0301 cache\u0301e": "verite cachee",
 		"Æon Øst ß":                       "æon øst ß",
 		"İstanbul":                        "istanbul",
+		"":                                "",
+		"ǎ":                               "a",
 		"Россия":                          "россия",
 	} {
 		if got := Ascii(in); got != want {
