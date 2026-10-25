@@ -384,6 +384,7 @@ function applyRun(run) {
     if (lot.running) {
       lot.running = false;
       lot.current = "";
+      lot.seen = ""; // un prochain lot, suivi par une autre page, n'est pas « fini » pour celle-ci
       lotRender();
       lotProgress("", "");
     }
