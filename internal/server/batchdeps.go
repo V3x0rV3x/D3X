@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/V3x0rV3x/D3X/internal/batch"
@@ -45,7 +46,12 @@ func (d batchDeps) PubStart(src source.Source, path string) (*publish.Job, error
 func (d batchDeps) PubGet(id string) (*publish.Job, bool) { return d.s.pub.Get(id) }
 func (d batchDeps) PubCancel(id string)                   { d.s.pub.Cancel(id) }
 func (d batchDeps) PubPublish(id string, fields map[string]string) error {
-	return d.s.pub.Publish(id, publishFields(fields))
+	f := publishFields(fields)
+	// Même garde que la route /ui/pub/{id}/publish, que le lot n'emprunte pas.
+	if strings.TrimSpace(f["categoryId"]) == "" {
+		return errors.New("choisis une catégorie")
+	}
+	return d.s.pub.Publish(id, f)
 }
 func (d batchDeps) PubRead(ctx context.Context, id string, index int, off, n int64) ([]byte, int64, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
@@ -148,7 +154,11 @@ func (d batchDeps) Redo(ctx context.Context, name string, size int64, tmdbRef, c
 	if len(out.Redo) == 0 {
 		return "", nil
 	}
-	return out.Redo[0].Name, nil
+	// Une entrée suffit à bloquer, comme la page, même sans nom.
+	if n := strings.TrimSpace(out.Redo[0].Name); n != "" {
+		return n, nil
+	}
+	return "version plus récente", nil
 }
 
 func (d batchDeps) RequestsFor(ctx context.Context, name string) (json.RawMessage, error) {

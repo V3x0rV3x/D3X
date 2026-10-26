@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/V3x0rV3x/D3X/internal/journal"
 	"github.com/V3x0rV3x/D3X/internal/mediainfo"
@@ -111,7 +112,11 @@ func (e *Engine) localNfo(ctx context.Context, j *publish.Job) string {
 	if err != nil {
 		return ""
 	}
-	return strings.TrimRight(strings.ReplaceAll(decodeNfo(b), "\r\n", "\n"), " \t\r\n")
+	// Tous les blancs de fin, comme \s de la page : l'espace insécable de
+	// l'octet 0xFF des vieux NFO (page de code 437) compris.
+	return strings.TrimRightFunc(strings.ReplaceAll(decodeNfo(b), "\r\n", "\n"), func(r rune) bool {
+		return unicode.IsSpace(r) || r == '\uFEFF'
+	})
 }
 
 type mbWork struct {

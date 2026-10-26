@@ -66,7 +66,7 @@ type Options struct {
 	SeedLater bool    `json:"seedLater"` // démarrer le seed à la fin du lot
 	KeepNfo   bool    `json:"keepNfo"`   // reprendre le .nfo de la release
 	Cap       float64 `json:"cap"`       // Gio par release, 0 : sans plafond
-	Max       int     `json:"max"`       // publications au plus, 0 : sans limite
+	Max       float64 `json:"max"`       // publications au plus, 0 : sans limite (2,5 comme la page : arrêt après 3)
 	MaxGiB    float64 `json:"maxGib"`    // Gio publiés par lot, 0 : sans limite
 }
 

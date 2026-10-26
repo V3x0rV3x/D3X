@@ -242,7 +242,7 @@ func (e *Engine) loop(l *lot) {
 		if l.stopped() {
 			break
 		}
-		if o.Max > 0 && r.Published >= o.Max && !o.Sim {
+		if o.Max > 0 && float64(r.Published) >= o.Max && !o.Sim {
 			e.set(func(*Run) { en.Detail = "plafond de publications atteint" })
 			continue
 		}
