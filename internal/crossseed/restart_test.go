@@ -108,3 +108,63 @@ func TestClientRestartDuringCheck(t *testing.T) {
 		})
 	}
 }
+
+// Vu en vérification avant un arrêt (sawChecking gardé dans pending.json), puis
+// arrêté au redémarrage sans avoir été vérifié : la file d'attente de
+// vérification s'est vidée (client arrêté), les fichiers ne sont pas en cause.
+// La vérification est relancée une fois avant de conclure « tes fichiers
+// diffèrent » (bertho-zero, ticket n°3, 27/10/26 : 53 ajouts de la Médiathèque
+// marqués « vérifié à 0,0 % », données bonnes).
+func TestLostCheckAfterRestart(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		progress, from float64 // à l'arrêt, et au premier passage en vérification
+		moved          bool    // la progression a bougé pendant la vérification
+		after          float64 // une fois vraiment vérifié
+		want           string
+		rechecks       int
+	}{
+		{"sorti de la file à 0 %", 0, 0, false, 1, StSeeding, 1},
+		{"arrêté sans avoir bougé", 0.4, 0.4, false, 1, StSeeding, 1},
+		{"vraiment différents", 0, 0, false, 0, StFailed, 1},
+		{"vérifié jusqu'au bout", 0.4, 0, true, 1, StFailed, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolatedConfig(t)
+			raw := mkTorrent("Release.L", map[string]int64{"L.mkv": 1_000_000_000}, "https://announce.v3x.club/pk/announce", "")
+			p, _ := torrent.Parse(raw)
+			h := strings.ToLower(p.InfoHash)
+			fq := &fakeQbit{list: map[string]*fakeTorrent{h: {Torrent: qbit.Torrent{
+				Hash: h, Name: p.Name, SavePath: "/liens", ContentPath: "/liens/" + p.Name, State: "stoppedDL",
+				Progress: tc.progress, Size: p.Total, TotalSize: p.Total,
+			}, raw: raw, after: tc.after}}}
+			qs := httptest.NewServer(fq.handler(t))
+			defer qs.Close()
+			// Fin de vérification vue un quart d'heure avant l'arrêt de D3X.
+			before := time.Now().Add(-15 * time.Minute)
+			pending, _ := json.Marshal([]*watch{{
+				Client: "c1", Key: "lib:L", Name: p.Name, ID: "66666666-6666-6666-6666-666666666666", InfoHash: h,
+				Since: before.Add(-5 * time.Minute), SawChecking: true, CheckFrom: tc.from, CheckMoved: tc.moved,
+				EndAt: before, EndProgress: tc.progress, Status: StChecking, Progress: tc.progress,
+			}})
+			if err := config.WriteFileAtomic("pending.json", pending); err != nil {
+				t.Fatal(err)
+			}
+			q, _ := client.New(client.Options{URL: qs.URL, User: "admin", Pass: "secret"})
+			e := New(oneClient(q, v3x.New(qs.URL, "cle", "D3X/test"), config.Defaults()))
+			waitFor(t, func() bool {
+				st, ok := e.WatchOf(h)
+				return ok && st.Status == tc.want
+			})
+			fq.mu.Lock()
+			n := fq.rechecks[h]
+			fq.mu.Unlock()
+			if n != tc.rechecks {
+				t.Fatalf("%d vérifications demandées, %d attendues", n, tc.rechecks)
+			}
+			if st, _ := e.WatchOf(h); tc.want == StFailed && !strings.Contains(st.Detail, "tes fichiers diffèrent") {
+				t.Fatalf("échec : %q", st.Detail)
+			}
+		})
+	}
+}

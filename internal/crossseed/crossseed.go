@@ -172,6 +172,14 @@ type watch struct {
 	// états intermédiaires pendant une revérification).
 	EndAt       time.Time `json:"endAt,omitempty"`
 	EndProgress float64   `json:"endProgress,omitempty"`
+	// Vue en vérification à cette progression, et bougée depuis ou non : un
+	// torrent sorti de la file d'attente de vérification sans avoir été
+	// vérifié (client arrêté, bertho-zero, ticket n°3, 27/10/26) finit
+	// arrêté là où il était. Relaunched : cette vérification perdue a déjà
+	// été relancée une fois, le résultat suivant fait foi.
+	CheckFrom  float64 `json:"checkFrom,omitempty"`
+	CheckMoved bool    `json:"checkMoved,omitempty"`
+	Relaunched bool    `json:"relaunched,omitempty"`
 	// MinProgress : démarre dès cette vérification atteinte, sous 100 %
 	// (release de la médiathèque à compléter) ; 0 = 100 % exigé.
 	MinProgress float64 `json:"minProgress,omitempty"`

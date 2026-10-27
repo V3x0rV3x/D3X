@@ -267,6 +267,21 @@ function hourOf(iso) {
   return new Date(iso).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }).replace(":", " h ");
 }
 
+// Le jour d'une analyse quand ce n'est pas aujourd'hui (« demain », « hier »,
+// « le 25 octobre »), suivi d'une espace ; vide sinon. Avec une surveillance
+// toutes les 12 heures ou une fois par jour (Ekhstaz, 27/10/26), l'heure seule
+// ne disait plus quel jour.
+function dayOf(iso) {
+  const d = new Date(iso);
+  const now = new Date();
+  const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((day(d) - day(now)) / 86400000);
+  if (diff === 0) return "";
+  if (diff === 1) return "demain ";
+  if (diff === -1) return "hier ";
+  return "le " + d.toLocaleDateString("fr-FR", { day: "numeric", month: "long" }) + " ";
+}
+
 // Ligne « Surveillance » sous le titre du cross-seed.
 function renderWatch(s) {
   const w = s.watch || {};
@@ -275,7 +290,7 @@ function renderWatch(s) {
   if (!w.on) return;
   const parts = [];
   if (w.running) parts.push("Surveillance : analyse en cours");
-  else parts.push("Surveillance active" + (w.next ? " : prochaine analyse vers " + hourOf(w.next) : ""));
+  else parts.push("Surveillance active" + (w.next ? " : prochaine analyse " + dayOf(w.next) + "vers " + hourOf(w.next) : ""));
   const l = w.last;
   line.classList.toggle("bad", !!(l && l.error));
   if (l && l.error) parts.push("la dernière a échoué (" + l.error + ")");
@@ -285,7 +300,7 @@ function renderWatch(s) {
     if (l.added) bits.push(l.added + " " + plural(l.added, "ajoutée", "ajoutées"));
     if (l.danger) bits.push(l.danger + " hit and run en vue");
     if (l.warn) bits.push(l.warn);
-    parts.push("dernière à " + hourOf(l.at) + " : " + bits.join(", "));
+    parts.push("dernière " + dayOf(l.at) + "à " + hourOf(l.at) + " : " + bits.join(", "));
   }
   $("#watch-txt").textContent = parts.join(". ") + ".";
 }
@@ -293,7 +308,7 @@ function renderWatch(s) {
 function watchHint() {
   const s = ui.state || {};
   const w = s.watch || {};
-  let t = "Seuls les torrents arrivés depuis la dernière fois sont relus : ton client n'est presque pas sollicité.";
+  let t = "Une analyse part au lancement de D3X, puis à l'intervalle choisi. Seuls les torrents arrivés depuis la dernière fois sont relus : ton client n'est presque pas sollicité.";
   if (s.mode) t += " D3X tourne en continu sur ce serveur : la surveillance ne s'arrête pas.";
   else if (w.tray) t += " Fenêtre fermée, D3X reste dans la zone de notification (clic droit sur son icône ▸ Quitter pour l'arrêter).";
   else t += " Elle tourne tant que D3X est lancé.";
@@ -392,7 +407,8 @@ function fillSettings() {
   linksWarn();
   const w = s.watch || {};
   $("#w-on").checked = !!w.on;
-  $("#w-min").value = String([15, 30, 60, 180].includes(w.minutes) ? w.minutes : 30);
+  // Jusqu'à une fois par jour (Ekhstaz, 27/10/26) ; D3X borne à 24 h.
+  $("#w-min").value = String([15, 30, 60, 180, 360, 720, 1440].includes(w.minutes) ? w.minutes : 30);
   $("#w-notify").checked = !!w.notify;
   $("#w-auto").checked = !!w.autoAdd;
   $("#w-start").checked = !!w.autostart;

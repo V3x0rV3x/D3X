@@ -48,11 +48,24 @@ func TestLotServerSide(t *testing.T) {
 		filepath.Join(parent, "Livre.Demo.2022.epub"),
 		filepath.Join(parent, "Collection.Demo"),
 	}
-	code, out, body := call(t, s, "POST", "/ui/batch/start", map[string]interface{}{"path": parent, "source": "local", "paths": paths, "options": map[string]interface{}{"sim": true, "video": true, "cap": 300}})
+	// Un lot ne part que sur une demande de ce lancement de D3X : celle d'avant
+	// un redémarrage (renvoyée, ou page d'avant la 1.1.39 sans « boot ») est
+	// refusée et rien ne démarre (bertho-zero, ticket n°3, 27/10/26).
+	_, st0, _ := call(t, s, "GET", "/ui/state", nil)
+	boot, _ := st0["boot"].(string)
+	if boot == "" || boot != s.boot {
+		t.Fatalf("/ui/state sans le lancement : %v", st0["boot"])
+	}
+	for _, old := range []string{"", "lancement-precedent"} {
+		if code, _, body := call(t, s, "POST", "/ui/batch/start", map[string]interface{}{"path": parent, "source": "local", "paths": paths, "boot": old}); code != http.StatusConflict || s.lot.State() != nil {
+			t.Fatalf("lot démarré par une demande d'un autre lancement (%q) : %d %s", old, code, body)
+		}
+	}
+	code, out, body := call(t, s, "POST", "/ui/batch/start", map[string]interface{}{"path": parent, "source": "local", "paths": paths, "boot": boot, "options": map[string]interface{}{"sim": true, "video": true, "cap": 300}})
 	if code != http.StatusOK || out["state"] != "running" {
 		t.Fatalf("%d %s", code, body)
 	}
-	if code, _, body := call(t, s, "POST", "/ui/batch/start", map[string]interface{}{"path": parent, "source": "local", "paths": paths[:1]}); code != http.StatusConflict {
+	if code, _, body := call(t, s, "POST", "/ui/batch/start", map[string]interface{}{"path": parent, "source": "local", "paths": paths[:1], "boot": boot}); code != http.StatusConflict {
 		t.Fatalf("second lot accepté : %d %s", code, body)
 	}
 

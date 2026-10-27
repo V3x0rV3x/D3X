@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -366,5 +367,83 @@ func TestFilePath(t *testing.T) {
 	}
 	if _, ok := m.FilePath("inconnu", 0); ok {
 		t.Fatal("job inconnu")
+	}
+}
+
+// slowHash : un hachage qui ne finit qu'une fois annulé ; compte ceux qui
+// ont fini.
+type slowHash struct {
+	source.Local
+	ended *atomic.Int32
+}
+
+func (s slowHash) Hash(ctx context.Context, _ *maketorrent.Plan, _ []string, _ string, _ maketorrent.Progress) ([]byte, bool, error) {
+	defer s.ended.Add(1)
+	<-ctx.Done()
+	return nil, false, ctx.Err()
+}
+
+// Le Lot annule un doublon juste après Start : l'annulation doit exister dès
+// le retour de Start, sinon le hachage tourne jusqu'au bout sans job pour
+// l'arrêter (bertho-zero, ticket n°3, 27/10/26 : 23 hachages à la fois).
+func TestCancelRightAfterStart(t *testing.T) {
+	_, dir := release(t)
+	fc := newFakeClient(t)
+	site := newFakeSite(t)
+	q, _ := client.New(client.Options{URL: fc.srv.URL})
+	clients := envOf(site, crossseed.Target{ID: "c1", Name: "qBittorrent", Client: q})
+	m := New(clients, crossseed.New(clients), "test")
+	var ended atomic.Int32
+	src := slowHash{ended: &ended}
+	const n = 20
+	for i := 0; i < n; i++ {
+		j, err := m.Start(src, dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		m.mu.Lock()
+		armed := m.jobs[j.ID] != nil && m.jobs[j.ID].cancel != nil
+		m.mu.Unlock()
+		if !armed {
+			t.Fatal("pas d'annulation au retour de Start")
+		}
+		m.Cancel(j.ID)
+	}
+	wait(t, func() bool { return ended.Load() == n })
+	if m.Busy() {
+		t.Fatal("publications annulées encore suivies")
+	}
+}
+
+// Dossier rangé par une médiathèque (Hypsis, 27/10/26) : le nom proposé est
+// celui de sa vidéo quand le dossier n'a pas l'air d'un nom de release.
+func TestNameFromVideo(t *testing.T) {
+	plan := func(name string, single bool, files ...maketorrent.Entry) *maketorrent.Plan {
+		p := &maketorrent.Plan{Name: name, Single: single, Files: files}
+		for _, f := range files {
+			p.Total += f.Size
+		}
+		return p
+	}
+	movie := maketorrent.Entry{Rel: "1917.2019.MULTi.1080p.BluRay.x264-GROUPE.mkv", Size: 8 << 30}
+	srt := maketorrent.Entry{Rel: "1917.2019.MULTi.1080p.BluRay.x264-GROUPE.fr.srt", Size: 80 << 10}
+	for _, c := range []struct {
+		name string
+		p    *maketorrent.Plan
+		main int
+		want string
+	}{
+		{"dossier de médiathèque", plan("1917 (2019)", false, srt, movie), 1, "1917.2019.MULTi.1080p.BluRay.x264-GROUPE"},
+		{"dossier de release", plan("1917.2019.MULTi.1080p.BluRay.x264-GROUPE", false, movie), 0, ""},
+		{"fichier seul", plan(movie.Rel, true, movie), 0, ""},
+		{"vidéo sans nom de release", plan("1917 (2019)", false, maketorrent.Entry{Rel: "1917 (2019).mkv", Size: 8 << 30}), 0, ""},
+		{"saison", plan("Série (2020)", false,
+			maketorrent.Entry{Rel: "Saison 1/Serie.S01E01.1080p.WEB.H264-GRP.mkv", Size: 2 << 30},
+			maketorrent.Entry{Rel: "Saison 1/Serie.S01E02.1080p.WEB.H264-GRP.mkv", Size: 1 << 30},
+			maketorrent.Entry{Rel: "Saison 1/Serie.S01E03.1080p.WEB.H264-GRP.mkv", Size: 1 << 30}), 0, ""},
+	} {
+		if got := nameFromVideo(c.p, c.main); got != c.want {
+			t.Errorf("%s : %q, attendu %q", c.name, got, c.want)
+		}
 	}
 }

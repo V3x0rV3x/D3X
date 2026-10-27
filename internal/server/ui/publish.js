@@ -59,8 +59,9 @@ async function localNfoOf(j) {
   if (!nfos.length) return "";
   const depth = (x) => x.f.rel.split("/").length;
   const top = Math.min(...nfos.map(depth));
-  const want = String(j.name).toLowerCase().replace(/\.[a-z0-9]{2,4}$/, "");
-  const named = (x) => (x.f.rel.toLowerCase().includes(want) ? 1 : 0);
+  // Au nom du dossier, ou à celui de la vidéo quand il remplace le dossier (Hypsis).
+  const wants = [j.name, j.nameFromVideo].filter(Boolean).map((n) => String(n).toLowerCase().replace(/\.[a-z0-9]{2,4}$/, ""));
+  const named = (x) => (wants.some((w) => x.f.rel.toLowerCase().includes(w)) ? 1 : 0);
   const pick = nfos.filter((x) => depth(x) === top).sort((a, b) => named(b) - named(a))[0];
   try {
     const r = await fetch("/ui/pub/" + j.id + "/file/" + pick.i + "?offset=0&size=" + pick.f.size);
@@ -354,7 +355,12 @@ async function choose(path, source, opts) {
     window.pubSources();
   }
   try {
+    const old = pub.job;
     const j = await api("/ui/pub/start", { path, source: pub.source });
+    // « Revoir » depuis le Lot pendant qu'une autre release est ouverte ici :
+    // son hachage s'arrête au lieu de tourner jusqu'au bout sans plus être
+    // suivi (ticket n°3, 27/10/26).
+    if (old && !old.published && old.id !== j.id) api("/ui/pub/" + old.id + "/cancel", {}).catch(() => { /* rien */ });
     resetForm();
     pub.fromLot = opts && opts.fromLot ? path : "";
     pub.job = j;
@@ -364,7 +370,8 @@ async function choose(path, source, opts) {
     $("#pub-job").classList.remove("hidden");
     $("#pub-form").classList.remove("hidden");
     $("#pub-done").classList.add("hidden");
-    $("#f-name").value = stripExt(j.name, j.single);
+    $("#f-name").value = releaseNameOf(j);
+    if (j.nameFromVideo) toast("Nom de release repris de la vidéo : le nom du dossier n'en est pas un.");
     renderJob();
     runMediaInfo();
     window.musicSetup();
@@ -440,6 +447,13 @@ function goneText(g) {
 
 function stripExt(name, single) {
   return single ? name.replace(/\.(mkv|mp4|avi|m2ts|ts|mov|wmv|webm|mpe?g|m4v|iso|flac|mp3|m4a|ogg|opus|wav|dsf)$/i, "") : name;
+}
+
+// Nom de release proposé : celui de la vidéo principale quand le dossier,
+// rangé par une médiathèque (« 1917 (2019) »), n'en porte pas (Hypsis,
+// 27/10/26) ; sinon celui du dossier, ou du fichier sans son extension.
+function releaseNameOf(j) {
+  return j.nameFromVideo || stripExt(j.name, j.single);
 }
 
 function resetForm() {
@@ -720,7 +734,7 @@ async function loadFiche(force) {
   const leaf = currentCategory();
   try {
     const f = await api("/ui/pub/" + j.id + "/fiche", {
-      releaseName: $("#f-name").value.trim() || stripExt(j.name, j.single),
+      releaseName: $("#f-name").value.trim() || releaseNameOf(j),
       mediainfo: pub.mediainfo,
       tmdbRef: pub.tmdb && !isGame() ? pub.tmdb.type + "/" + pub.tmdb.id : null,
       mbRef: pub.mb ? mbURL(pub.mb) : null,
@@ -903,7 +917,7 @@ function gameSetup() {
   $("#game-field").classList.toggle("hidden", !on);
   $("#book-field").classList.toggle("hidden", !isBook());
   if (!on || pub.game || $("#game-q").value.trim()) return;
-  const q = (pub.fiche && pub.fiche.tmdbQuery) || (pub.job ? stripExt(pub.job.name, pub.job.single) : "");
+  const q = (pub.fiche && pub.fiche.tmdbQuery) || (pub.job ? releaseNameOf(pub.job) : "");
   if (!q) return;
   $("#game-q").value = q;
   searchGame();
@@ -1058,7 +1072,7 @@ async function loadVersions() {
     return;
   }
   const leaf = currentCategory();
-  const q = new URLSearchParams({ name: $("#f-name").value.trim() || stripExt(j.name, j.single), size: String(j.total || 0) });
+  const q = new URLSearchParams({ name: $("#f-name").value.trim() || releaseNameOf(j), size: String(j.total || 0) });
   if (pub.tmdb && !isGame() && !isBook() && !isAlbum()) q.set("tmdb", pub.tmdb.type + "/" + pub.tmdb.id);
   if (leaf) q.set("category", leaf.slug);
   else if ($("#f-root").value) q.set("category", $("#f-root").value);

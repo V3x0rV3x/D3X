@@ -101,6 +101,8 @@ type fakeQbit struct {
 	dropRecheck map[string]int
 	// blank : le client redémarre et répond sans ses torrents (exodius19).
 	blank bool
+	// rechecks : demandes de vérification reçues, par info-hash.
+	rechecks map[string]int
 }
 
 func (f *fakeQbit) namesOf(h string, raw []byte) map[int]string {
@@ -217,6 +219,10 @@ func (f *fakeQbit) handler(t *testing.T) http.Handler {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		h := strings.ToLower(r.Form.Get("hashes"))
+		if f.rechecks == nil {
+			f.rechecks = map[string]int{}
+		}
+		f.rechecks[h]++
 		if f.dropRecheck[h] > 0 {
 			f.dropRecheck[h]--
 			return

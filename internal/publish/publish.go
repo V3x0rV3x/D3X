@@ -20,6 +20,7 @@ import (
 	"github.com/V3x0rV3x/D3X/internal/crossseed"
 	"github.com/V3x0rV3x/D3X/internal/journal"
 	"github.com/V3x0rV3x/D3X/internal/maketorrent"
+	"github.com/V3x0rV3x/D3X/internal/names"
 	"github.com/V3x0rV3x/D3X/internal/pathmap"
 	"github.com/V3x0rV3x/D3X/internal/source"
 	"github.com/V3x0rV3x/D3X/internal/torrent"
@@ -57,6 +58,9 @@ type Job struct {
 	Total       int64    `json:"total"`
 	PieceLength int64    `json:"pieceLength"`
 	MainFile    int      `json:"mainFile"` // index du plus gros fichier vidéo, sinon audio (MediaInfo)
+	// NameFromVideo : nom de release proposé à la place de celui du dossier,
+	// repris de sa vidéo principale (nameFromVideo) ; vide sinon.
+	NameFromVideo string `json:"nameFromVideo,omitempty"`
 	// Album : tags et qualité des pistes, quand la release en a.
 	Audio     *audio.Album `json:"audio,omitempty"`
 	Duplicate *v3x.Match   `json:"duplicate,omitempty"`
@@ -109,6 +113,29 @@ func New(c Clients, e *crossseed.Engine, version string) *Manager {
 
 var videoExt = map[string]bool{".mkv": true, ".mp4": true, ".avi": true, ".m2ts": true, ".ts": true, ".mov": true, ".wmv": true, ".webm": true, ".mpg": true, ".mpeg": true, ".m4v": true, ".iso": true, ".vob": true}
 
+// nameFromVideo : le nom de release à proposer pour un dossier qui n'en porte
+// pas (Hypsis, 27/10/26 : « 1917 (2019) » rangé par une médiathèque, sa vidéo
+// « 1917.2019.MULTi.1080p.BluRay.x264-GROUPE.mkv ») : celui de la vidéo
+// principale, sans extension, s'il a l'air d'un nom de release. Vide quand
+// le dossier porte déjà un nom de release (le cas normal), pour un fichier
+// seul, ou quand la vidéo ne fait pas plus de la moitié de la release (une
+// saison : un épisode n'est pas son nom).
+func nameFromVideo(plan *maketorrent.Plan, main int) string {
+	if plan.Single || main < 0 || main >= len(plan.Files) || names.LooksLikeRelease(plan.Name) {
+		return ""
+	}
+	f := plan.Files[main]
+	if !videoExt[strings.ToLower(path.Ext(f.Rel))] || f.Size*2 <= plan.Total {
+		return ""
+	}
+	base := path.Base(f.Rel)
+	base = strings.TrimSpace(strings.TrimSuffix(base, path.Ext(base)))
+	if !names.LooksLikeRelease(base) {
+		return ""
+	}
+	return base
+}
+
 func newID() string {
 	b := make([]byte, 8)
 	_, _ = rand.Read(b)
@@ -148,6 +175,9 @@ func (m *Manager) Start(src source.Source, where string) (*Job, error) {
 			}
 		}
 	}
+	if j.MainFile >= 0 {
+		j.NameFromVideo = nameFromVideo(plan, j.MainFile)
+	}
 	// Album (pas de vidéo) : tags et qualité lus là où sont les fichiers ;
 	// MediaInfo sur la plus grosse piste.
 	if j.MainFile < 0 && hasAudio {
@@ -173,18 +203,21 @@ func (m *Manager) Start(src source.Source, where string) (*Job, error) {
 	// Le client qui seedera, et où il voit le dossier parent.
 	j.setPlace(pick(ctx, env, src, src.Dir(plan.Root)))
 
+	// L'annulation existe avant le hachage : posée dans la goroutine, elle
+	// manquait à un Cancel arrivé juste après Start (le Lot annule tout de
+	// suite un doublon), et le hachage tournait jusqu'au bout sans job pour
+	// l'arrêter (bertho-zero, ticket n°3, 27/10/26 : 23 hachages à la fois,
+	// 3,3 Gio de mémoire après une simulation interrompue puis reprise).
+	hctx, hcancel := context.WithCancel(context.Background())
+	j.cancel = hcancel
 	m.mu.Lock()
 	m.jobs[j.ID] = j
 	m.mu.Unlock()
-	go m.hash(j)
+	go m.hash(hctx, j)
 	return j, nil
 }
 
-func (m *Manager) hash(j *Job) {
-	ctx, cancel := context.WithCancel(context.Background())
-	m.mu.Lock()
-	j.cancel = cancel
-	m.mu.Unlock()
+func (m *Manager) hash(ctx context.Context, j *Job) {
 	raw, cached, err := j.src.Hash(ctx, j.plan, j.exclude, "D3X "+m.version, func(done, total int64) {
 		m.mu.Lock()
 		j.Hashed = done

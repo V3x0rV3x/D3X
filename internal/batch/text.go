@@ -177,6 +177,34 @@ func dupText(d *v3x.Match) string {
 	return s + " · la Médiathèque la met en seed avec ces fichiers"
 }
 
+// dupRefused : V3X a refusé la publication parce que la release y est déjà
+// (duplicate : même .torrent) ou son contenu (duplicate_content : mêmes
+// fichiers, autre empaquetage). Le corps du refus donne la fiche existante
+// (id, name). ok faux pour tout autre refus.
+func dupRefused(code, body string) (detail, id string, ok bool) {
+	if code != "duplicate" && code != "duplicate_content" {
+		return "", "", false
+	}
+	var b struct {
+		ID   Text   `json:"id"`
+		Name string `json:"name"`
+	}
+	if body != "" {
+		_ = json.Unmarshal([]byte(body), &b)
+	}
+	detail = errorTexts[code]
+	switch {
+	case b.Name != "" && code == "duplicate_content":
+		detail = "le même contenu est déjà sur V3X : " + b.Name
+	case b.Name != "":
+		detail = "déjà sur V3X : " + b.Name
+	}
+	if code == "duplicate" {
+		return detail + " · « Revoir » pour la seeder avec ces fichiers", string(b.ID), true
+	}
+	return detail + " · la Médiathèque la met en seed avec ces fichiers", string(b.ID), true
+}
+
 // goneText : g ne doit pas être nil (les appelants vérifient).
 func goneText(g *v3x.Gone) string {
 	verb := "retirée"

@@ -311,6 +311,23 @@ func TestProcessCases(t *testing.T) {
 			t.Fatalf("doublon : %+v, %v", r.Entries[0], ev)
 		}
 	})
+	// Refusée à l'envoi parce que son contenu est déjà sur V3X : « Déjà
+	// présent », pas « Erreur » (raoul77, 27/10/26).
+	t.Run("doublon refusé à l'envoi", func(t *testing.T) {
+		d, p := happy(releases.Entry{Name: "A", Path: "/r/A", Video: true, Size: 10})
+		p.published = func(j *publish.Job) {
+			j.State, j.Published = publish.StReady, nil
+			j.Error, j.ErrorBody = "duplicate_content", `{"error":"duplicate_content","kind":"size","id":"e1","name":"Film.Existant","existingStatus":"active"}`
+		}
+		r := run(t, quick(d), Options{}, "/r/A")
+		en, ev := r.Entries[0], d.eventsCopy()
+		if en.State != "duplicate" || en.Detail != "le même contenu est déjà sur V3X : Film.Existant · la Médiathèque la met en seed avec ces fichiers" || r.Published != 0 {
+			t.Fatalf("doublon refusé : %+v", en)
+		}
+		if len(ev) != 1 || ev[0].Kind != "batch_duplicate" || ev[0].ID != "e1" || !d.wasCancelled("job-/r/A") {
+			t.Fatalf("journal : %v", ev)
+		}
+	})
 	t.Run("retirée", func(t *testing.T) {
 		d, p := happy(releases.Entry{Name: "A", Path: "/r/A", Video: true, Size: 10})
 		p.make = func(path string) *publish.Job {

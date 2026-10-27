@@ -35,6 +35,9 @@ func (s *Server) routesBatch() {
 	s.routesDiscogs()
 }
 
+// errRestarted : demande de lot faite avant le dernier lancement de D3X.
+var errRestarted = errors.New("D3X a redémarré depuis cette demande : le lot interrompu ne repart pas seul. Recharge la page, vérifie les releases cochées, puis relance le lot")
+
 // batchStart démarre le lot dans D3X : la page envoie les releases cochées
 // et les options, puis suit l'état. Un seul lot à la fois.
 func (s *Server) batchStart(w http.ResponseWriter, r *http.Request) {
@@ -44,8 +47,22 @@ func (s *Server) batchStart(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusConflict, batch.ErrRunning)
 		return
 	}
-	var spec batch.Spec
-	if !decode(w, r, 4<<20, &spec) {
+	var in struct {
+		batch.Spec
+		Boot string `json:"boot"`
+	}
+	if !decode(w, r, 4<<20, &in) {
+		return
+	}
+	spec := in.Spec
+	// Un lot ne part que sur un clic fait pour CE lancement de D3X : une
+	// demande d'avant un redémarrage (renvoyée par le navigateur ou un proxy,
+	// page restée sur l'ancien état) est refusée. Le README le promet : un lot
+	// interrompu ne repart pas seul, même après un redémarrage du conteneur
+	// (bertho-zero, ticket n°3, 27/10/26 : « lot démarré » une minute après
+	// chaque docker restart).
+	if in.Boot != s.boot {
+		fail(w, http.StatusConflict, errRestarted)
 		return
 	}
 	if len(spec.Paths) == 0 {

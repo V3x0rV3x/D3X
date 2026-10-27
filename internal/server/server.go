@@ -81,6 +81,7 @@ type Server struct {
 	pages           map[string]bool // page → affichée à l'écran (ping ?id=&shown=)
 
 	lot    *batch.Engine      // le lot (publication par lot), dans D3X lui-même
+	boot   string             // tiré à chaque lancement : un lot ne part que sur une demande de ce lancement
 	mi     *mediainfo.Chooser // MediaInfo : binaire s'il existe, sinon une page
 	miPage *mediainfo.Page
 	// lotRunningFn remplace s.lot.Running dans les tests (nil sinon).
@@ -135,7 +136,7 @@ func New(version string, cfg *config.Config, token string, port int) *Server {
 
 // NewWith prépare le serveur avec des options.
 func NewWith(version string, cfg *config.Config, token string, port int, opts Options) *Server {
-	s := &Server{Version: version, Token: token, Port: port, opts: opts, cfg: cfg, mux: http.NewServeMux(), restart: make(chan struct{}), restartOnce: &sync.Once{}}
+	s := &Server{Version: version, Token: token, Port: port, opts: opts, cfg: cfg, mux: http.NewServeMux(), restart: make(chan struct{}), restartOnce: &sync.Once{}, boot: NewToken()[:16]}
 	s.engine = crossseed.New(s.env)
 	s.engine.SetRefresh(s.retryClients)
 	s.mb = musicbrainz.New(version)
@@ -358,6 +359,7 @@ func (s *Server) v3xRetryLoop() {
 
 type stateOut struct {
 	Version string  `json:"version"`
+	Boot    string  `json:"boot"`           // ce lancement de D3X (démarrage d'un lot)
 	Mode    string  `json:"mode,omitempty"` // server (page jointe par le réseau), docker
 	Update  *Update `json:"update,omitempty"`
 	V3X     struct {
@@ -416,7 +418,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var o stateOut
-	o.Version, o.Update = s.Version, s.update
+	o.Version, o.Boot, o.Update = s.Version, s.boot, s.update
 	o.V3X.Configured = s.cfg.V3XKey != ""
 	o.V3X.OK = s.me != nil
 	o.V3X.Error = s.v3xErr

@@ -162,3 +162,13 @@ func TestRememberSSH(t *testing.T) {
 		t.Fatal("ForgetSSH n'a pas retiré la seedbox")
 	}
 }
+
+// Intervalles de la surveillance, jusqu'à une fois par jour (Ekhstaz,
+// 27/10/26) ; au-delà ou en deçà, borné.
+func TestWatchEvery(t *testing.T) {
+	for in, want := range map[int]int{0: 30, 5: 15, 15: 15, 180: 180, 360: 360, 720: 720, 1440: 1440, 5000: 1440} {
+		if got := (Watch{Minutes: in}).Every(); got != want {
+			t.Errorf("%d min : %d, attendu %d", in, got, want)
+		}
+	}
+}

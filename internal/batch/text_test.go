@@ -93,6 +93,16 @@ func TestTexts(t *testing.T) {
 	if got := pubErr("inconnu", "pas du json"); got != "inconnu" {
 		t.Errorf("%q", got)
 	}
+	// Refus « déjà sur V3X » : rangé dans Déjà présent avec la fiche existante.
+	if d, id, ok := dupRefused("duplicate", `{"error":"duplicate","id":"abc","infoHash":"x"}`); !ok || id != "abc" || d != "cette release est déjà sur V3X (même .torrent) · « Revoir » pour la seeder avec ces fichiers" {
+		t.Errorf("%q %q %v", d, id, ok)
+	}
+	if d, id, ok := dupRefused("duplicate_content", ""); !ok || id != "" || d != "le même contenu est déjà sur V3X · la Médiathèque la met en seed avec ces fichiers" {
+		t.Errorf("%q %q %v", d, id, ok)
+	}
+	if _, _, ok := dupRefused("duplicate_removed", `{"id":"abc"}`); ok {
+		t.Error("une release retirée n'est pas « déjà présente »")
+	}
 	if !blocking["mediainfo_missing"] || blocking["tmdb_missing"] {
 		t.Error("blocking")
 	}

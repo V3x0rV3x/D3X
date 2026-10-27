@@ -179,3 +179,41 @@ func atoi(s string) int {
 func RequestTitle(s string) (string, string) {
 	return TitleOnly(reqTailRe.ReplaceAllString(strings.TrimSpace(s), ""))
 }
+
+var (
+	// techToken : résolution, source ou codec.
+	techToken = regexp.MustCompile(`(?i)^([0-9]{3,4}[pi]|4k|uhd|blu-?ray|bdrip|brrip|bdremux|remux|web|web-?dl|webrip|hdtv|hdrip|hdlight|mhd|dvdrip|dvd[59r]?|tvrip|x26[45]|h26[45]|hevc|avc|av1|xvid|divx|10bit)$`)
+	// sceneMark : année, langue ou saison, ce qui précède un tag de groupe.
+	sceneMark = regexp.MustCompile(`(?i)^((19|20)[0-9]{2}|multi|multi2|french|truefrench|subfrench|vff|vfq|vfi|vf2|vf|vostfr|english|s[0-9]{1,2}(e[0-9]{1,3})*)$`)
+	groupTag  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_]{1,19}$`)
+)
+
+// LooksLikeRelease : le nom porte les marques d'un nom de release (Hypsis,
+// 27/10/26) : une résolution, une source ou un codec (« 1080p », « BluRay »,
+// « x264 »), ou un tag de groupe en fin de nom écrit à la façon des releases,
+// avec des points et une année ou une langue (« Film.2019.FRENCH-GROUPE »).
+// « 1917 (2019) », un dossier rangé par une médiathèque, n'en a pas, ni
+// « Spider-Man (2002) ».
+func LooksLikeRelease(name string) bool {
+	n := extRe.ReplaceAllString(strings.TrimSpace(name), "")
+	fields := strings.FieldsFunc(n, func(r rune) bool { return strings.ContainsRune("._ ()[]{}", r) })
+	marked := false
+	for _, f := range fields {
+		if techToken.MatchString(f) {
+			return true
+		}
+		for _, p := range strings.Split(f, "-") {
+			if techToken.MatchString(p) {
+				return true
+			}
+			if sceneMark.MatchString(p) {
+				marked = true
+			}
+		}
+	}
+	if !marked || strings.Contains(n, " ") || strings.Count(n, ".") < 2 {
+		return false
+	}
+	i := strings.LastIndexByte(n, '-')
+	return i > 0 && groupTag.MatchString(n[i+1:])
+}

@@ -17,6 +17,7 @@ const lot = {
   lastRun: null, // dernier état reçu, reposé sur le dossier relu
   gen: 0, // un par lot lancé d'ici : écarte un suivi parti avant
   poll: null,
+  calmUntil: 0, // « Lancer le lot » grisé jusque-là, juste après la fin d'un lot
 };
 
 // États du lot, dans l'ordre des onglets.
@@ -283,9 +284,17 @@ function lotBar() {
   $("#b-uncheck").classList.toggle("hidden", lot.running || n === 0);
   $("#b-bar-how").textContent = $("#b-sim").checked ? "Simulation : rien ne sera publié, tu verras ce que le lot ferait." : "Pour de vrai : les releases sûres seront publiées et mises en seed.";
   $("#b-run").classList.toggle("hidden", lot.running);
-  $("#b-run").disabled = n === 0;
+  $("#b-run").disabled = n === 0 || Date.now() < lot.calmUntil;
   $("#b-run").textContent = $("#b-sim").checked ? "Simuler le lot" : "Lancer le lot";
   $("#b-stop").classList.toggle("hidden", !lot.running);
+}
+
+// Fini, arrêté ou interrompu, le lot rend « Lancer le lot » à la place
+// d'« Arrêter » : grisé 3 s, un second clic sur « Arrêter » ne relance rien
+// (bertho-zero, ticket n°3, 27/10/26).
+function lotCalm() {
+  lot.calmUntil = Date.now() + 3000;
+  setTimeout(lotBar, 3100);
 }
 
 function lotProgress(label, detail) {
@@ -350,8 +359,12 @@ function lotOptions() {
   };
 }
 
-async function lotRun() {
-  if (lot.running) return;
+// Un lot ne part que d'un vrai clic sur « Lancer le lot » (ou de la touche
+// Entrée sur ce bouton), jamais d'un appel du code de la page, et seulement
+// pour ce lancement de D3X : un lot interrompu ne repart pas seul, même après
+// un redémarrage du conteneur (bertho-zero, ticket n°3, 27/10/26).
+async function lotRun(ev) {
+  if (lot.running || !ev || !ev.isTrusted || Date.now() < lot.calmUntil) return;
   if (!pub.ctx) await loadCtx();
   if (!pub.ctx) return toast("Publication impossible : " + (pub.ctxError || "V3X injoignable"), "bad");
   // Seulement ce qui est coché ET affiché à l'écran : un dossier apparu entre-temps
@@ -359,7 +372,9 @@ async function lotRun() {
   const todo = lot.entries.filter((e) => e.checked && (e.state === "pending" || e.state === "ready" || e.state === "review" || e.state === "simulated"));
   if (!todo.length) return;
   try {
-    const run = await api("/ui/batch/start", { path: lot.dir, source: lot.source, paths: todo.map((e) => e.path), options: lotOptions() });
+    // D3X refuse une demande faite pour un lancement d'avant le sien.
+    const st = await api("/ui/state");
+    const run = await api("/ui/batch/start", { path: lot.dir, source: lot.source, paths: todo.map((e) => e.path), options: lotOptions(), boot: st.boot });
     // Un suivi parti avant le départ rapporterait le lot d'avant (fini) : sa
     // réponse est ignorée.
     lot.gen++;
@@ -387,12 +402,15 @@ async function lotStop() {
 function applyRun(run) {
   if (!run) {
     // D3X redémarré en plein lot : plus rien ne tourne, la page rend la main.
+    // Le lot ne repart pas seul : c'est au membre de le relancer.
     if (lot.running) {
       lot.running = false;
       lot.current = "";
       lot.seen = ""; // un prochain lot, suivi par une autre page, n'est pas « fini » pour celle-ci
+      lotCalm();
       lotRender();
       lotProgress("", "");
+      toast("D3X a redémarré : le lot est interrompu et ne repart pas seul. Coche les releases à reprendre, puis « Lancer le lot ».");
     }
     return;
   }
@@ -435,6 +453,7 @@ function applyRun(run) {
   lot.current = run.current || "";
   lot.done = run.done;
   lot.total = run.total;
+  if (ending) lotCalm();
   lotRender();
   lotProgress(run.label, run.state === "paused" ? "MediaInfo en cours dans une page de D3X…" : run.detail);
   if (run.mediainfoWanted) lotServeMediaInfo(run.mediainfoWanted);

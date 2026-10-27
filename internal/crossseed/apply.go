@@ -319,6 +319,11 @@ func (e *Engine) step(ctx context.Context, q client.Client, h string, byHash map
 		journal.Add(journal.Event{Kind: "crossseed_failed", Name: w.Name, InfoHash: h, ID: w.ID, Detail: w.Detail})
 	case t.Checking:
 		e.mu.Lock()
+		if !w.SawChecking {
+			w.CheckFrom, w.CheckMoved = t.Progress, false
+		} else if t.Progress != w.Progress {
+			w.CheckMoved = true
+		}
 		w.SawChecking, w.Progress = true, t.Progress
 		w.EndAt = time.Time{}
 		e.mu.Unlock()
@@ -349,6 +354,15 @@ func (e *Engine) step(ctx context.Context, q client.Client, h string, byHash map
 		}
 		stable := time.Since(w.EndAt) >= endStable
 		minP := w.MinProgress
+		// Rien de vérifié : arrêté à 0 % pile, ou là où la vérification l'avait
+		// trouvé, sans que la progression ait bougé. « En vérification »
+		// couvre aussi la file d'attente (checkingDL) : un torrent qui en sort
+		// sans avoir été vérifié (client arrêté pendant l'attente) n'a pas des
+		// fichiers différents, sa vérification s'est perdue (bertho-zero,
+		// ticket n°3, 27/10/26 : 53 ajouts de la Médiathèque marqués « vérifié
+		// à 0,0 % » au redémarrage, données bonnes). Relancée une fois avant
+		// de conclure.
+		lost := !w.Relaunched && (t.Progress <= 0 || (!w.CheckMoved && t.Progress == w.CheckFrom))
 		e.mu.Unlock()
 		if !stable {
 			return
@@ -363,6 +377,16 @@ func (e *Engine) step(ctx context.Context, q client.Client, h string, byHash map
 			set(StSeeding, "vérifié à "+pct(t.Progress)+" : les petits fichiers manquants se téléchargent, puis il seede")
 			journal.Add(journal.Event{Kind: "crossseed", Name: w.Name, InfoHash: h, ID: w.ID, Detail: w.Detail})
 			e.forget(h)
+			return
+		}
+		if lost {
+			// Comme une vérification jamais vue : relancée, puis suivie par la
+			// branche du bas si le client ne la lance pas.
+			_ = q.Recheck(ctx, h)
+			e.mu.Lock()
+			w.Relaunched, w.SawChecking, w.CheckMoved, w.CheckFrom = true, false, false, 0
+			w.EndAt, w.EndProgress, w.Rechecks, w.RecheckAt = time.Time{}, 0, 0, time.Now()
+			e.mu.Unlock()
 			return
 		}
 		set(StFailed, "vérifié à "+pct(t.Progress)+" : tes fichiers diffèrent de la release V3X, le torrent reste arrêté")
@@ -451,6 +475,7 @@ func (e *Engine) Recheck(key string) error {
 	if w := e.watches[hash]; w != nil {
 		w.Status, w.Detail, w.Progress = StChecking, "", 0
 		w.Since, w.SawChecking, w.Rechecks, w.RecheckAt, w.EndAt = time.Now(), false, 0, time.Time{}, time.Time{}
+		w.CheckFrom, w.CheckMoved, w.Relaunched = 0, false, false
 		if r := e.rows[w.Key]; r != nil {
 			r.Status, r.Detail = StChecking, ""
 		}
@@ -721,6 +746,10 @@ func (e *Engine) loadWatches() {
 	var list []*watch
 	if json.Unmarshal(b, &list) == nil {
 		for _, w := range list {
+			// Une fin de vérification vue avant l'arrêt de D3X n'a pas été
+			// suivie pendant l'arrêt : sa stabilité se constate de nouveau,
+			// le temps qu'un client relancé avec lui se pose (ticket n°3).
+			w.EndAt = time.Time{}
 			e.watches[w.InfoHash] = w
 		}
 	}

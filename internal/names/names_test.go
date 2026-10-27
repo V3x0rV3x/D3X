@@ -37,3 +37,26 @@ func TestSimilarity(t *testing.T) {
 		t.Errorf("%q %q", title, year)
 	}
 }
+
+// Un nom de release, ou un dossier rangé par une médiathèque (Hypsis, 27/10/26).
+func TestLooksLikeRelease(t *testing.T) {
+	for in, want := range map[string]bool{
+		"1917.2019.MULTi.1080p.BluRay.x264-GROUPE.mkv":    true,
+		"Film.2024.1080p.WEB.H264-D3X":                    true,
+		"Taxi (1998) MULTi [1080p] BluRay x264-PopHD.mkv": true,
+		"Malfaisante.FRENCH.WEB-GRP":                      true,
+		"The.Simpsons.S38E01.SUBFRENCH.WEB-DL-SUPPLY":     true,
+		"Film.Ancien.2003.FRENCH-GROUPE":                  true,
+		"Artiste - Album (2020) [FLAC 24bit-96kHz]":       false,
+		"1917 (2019)":              false,
+		"Spider-Man (2002)":        false,
+		"Le.Comte.de.Monte-Cristo": false,
+		"The.Spider-Man.2002":      false,
+		"Mes vacances":             false,
+		"00001.m2ts":               false,
+	} {
+		if got := LooksLikeRelease(in); got != want {
+			t.Errorf("%s : %v, attendu %v", in, got, want)
+		}
+	}
+}

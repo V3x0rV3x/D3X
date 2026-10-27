@@ -352,7 +352,7 @@ func (e *Engine) process(l *lot, en *Entry) {
 	}
 	summary := strings.Join(parts, " · ")
 	if o.Sim {
-		cancel() // le .torrent reste en cache : le vrai lot ne rehachera pas
+		cancel() // le hachage s'arrête ; fini, le .torrent reste en cache pour le vrai lot
 		e.decide(src, en, "simulated", "serait publiée : "+summary, "")
 		return
 	}
@@ -461,6 +461,14 @@ func (e *Engine) publishWith(l *lot, en *Entry, j *publish.Job, fields map[strin
 		return false
 	}
 	if j2.Published == nil {
+		// Refusée parce qu'elle (ou son contenu) est déjà sur V3X : « Déjà
+		// présent », comme les doublons vus avant le hachage, pas « Erreur »
+		// (raoul77, 27/10/26).
+		if detail, id, ok := dupRefused(j2.Error, j2.ErrorBody); ok {
+			e.deps.PubCancel(j.ID)
+			e.decide(src, en, "duplicate", detail, id)
+			return false
+		}
 		e.decide(src, en, "error", pubErr(j2.Error, j2.ErrorBody), "")
 		return false
 	}
