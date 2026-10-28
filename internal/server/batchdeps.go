@@ -47,11 +47,12 @@ func (d batchDeps) PubGet(id string) (*publish.Job, bool) { return d.s.pub.Get(i
 func (d batchDeps) PubCancel(id string)                   { d.s.pub.Cancel(id) }
 func (d batchDeps) PubPublish(id string, fields map[string]string) error {
 	f := publishFields(fields)
-	// Même garde que la route /ui/pub/{id}/publish, que le lot n'emprunte pas.
+	// Même garde que la route /ui/pub/{id}/publish, que le lot n'emprunte pas,
+	// et la même porte : les règles de réupload des teams (publishGuarded).
 	if strings.TrimSpace(f["categoryId"]) == "" {
 		return errors.New("choisis une catégorie")
 	}
-	return d.s.pub.Publish(id, f)
+	return d.s.publishGuarded(id, f)
 }
 func (d batchDeps) PubRead(ctx context.Context, id string, index int, off, n int64) ([]byte, int64, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)

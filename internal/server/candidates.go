@@ -424,20 +424,8 @@ func (s *Server) teamPoliciesMatch(w http.ResponseWriter, r *http.Request) {
 		apiFail(w, err)
 		return
 	}
-	byTag := map[string]policyHit{}
-	var banned []v3x.TeamPolicy
-	for _, t := range list {
-		if t.Policy == "banned" {
-			banned = append(banned, t)
-			continue
-		}
-		if t.Allowed {
-			continue
-		}
-		for _, tag := range t.Tags {
-			byTag[strings.ToLower(tag)] = policyHit{Team: t.Name, Policy: t.Policy}
-		}
-	}
+	idx := indexPolicies(list)
+	banned, byTag := idx.banned, idx.byTag
 	out := map[string]policyHit{}
 	rows := s.engine.Rows()
 	for _, row := range rows {
@@ -466,25 +454,37 @@ var (
 // « …-Dread-Team.mkv », « …[TOXIC] »), comme le site (lib/banned-tags.ts) :
 // après un tiret ou entre crochets, séparateurs internes du tag facultatifs.
 func bannedTagOf(name string, list []v3x.TeamPolicy) *v3x.TeamPolicy {
-	base := trailingTitle.ReplaceAllString(strings.TrimSpace(name), "")
-	base = fileExt.ReplaceAllString(base, "")
+	base := tagBase(name)
 	for i := range list {
-		parts := tagParts.Split(list[i].Name, -1)
-		var q []string
-		for _, p := range parts {
-			if p != "" {
-				q = append(q, regexp.QuoteMeta(p))
-			}
-		}
-		if len(q) == 0 {
-			continue
-		}
-		re, err := regexp.Compile(`(?i)(?:-\s*|\[)` + strings.Join(q, `[-._ ]?`) + `\]?$`)
-		if err == nil && re.MatchString(base) {
+		if re := bannedPattern(list[i].Name); re != nil && re.MatchString(base) {
 			return &list[i]
 		}
 	}
 	return nil
+}
+
+// tagBase : le nom sans titre entre parenthèses en fin ni extension.
+func tagBase(name string) string {
+	base := trailingTitle.ReplaceAllString(strings.TrimSpace(name), "")
+	return fileExt.ReplaceAllString(base, "")
+}
+
+// bannedPattern : le motif d'un tag refusé (nil s'il est vide).
+func bannedPattern(tag string) *regexp.Regexp {
+	var q []string
+	for _, p := range tagParts.Split(tag, -1) {
+		if p != "" {
+			q = append(q, regexp.QuoteMeta(p))
+		}
+	}
+	if len(q) == 0 {
+		return nil
+	}
+	re, err := regexp.Compile(`(?i)(?:-\s*|\[)` + strings.Join(q, `[-._ ]?`) + `\]?$`)
+	if err != nil {
+		return nil
+	}
+	return re
 }
 
 // releaseGroup : le tag de groupe en fin de nom (« …x265-TEAM »), comme le site

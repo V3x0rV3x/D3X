@@ -150,6 +150,9 @@ func (e *Engine) process(l *lot, en *Entry) {
 		e.decide(src, en, "review", "dossier sans fichier à sa racine (collection, plusieurs releases ?)", "")
 		return
 	}
+	if e.policyStopped(l, en) {
+		return
+	}
 
 	j, err := e.deps.PubStart(src, en.Path)
 	if err != nil {
@@ -399,6 +402,39 @@ func (e *Engine) process(l *lot, en *Entry) {
 	e.publishWith(l, en, j, fields, summary)
 }
 
+// policyStopped : la release tombe sous une règle de réupload de V3X (team qui
+// l'interdit ou le soumet à son accord sans te l'avoir donné, groupe refusé,
+// ou detag de l'une d'elles, reconnu à la taille d'une copie taguée). Elle va
+// dans « À vérifier » avec la même pastille et la même raison que dans « Pas
+// sur V3X », avant tout hachage, quelle que soit son origine (dossier
+// parcouru, liste, fiche gardée). Règles illisibles : erreur, rien ne part à
+// l'aveugle. names : d'autres noms à vérifier que celui de l'entrée.
+func (e *Engine) policyStopped(l *lot, en *Entry, names ...string) bool {
+	q := PolicyQuery{Names: []string{en.Name}, Size: en.Size, Files: en.Files, Path: en.Path, Local: l.src.ID() == "local"}
+	for _, n := range names {
+		if strings.TrimSpace(n) != "" && n != en.Name {
+			q.Names = append(q.Names, n)
+		}
+	}
+	e.set(func(r *Run) {
+		for _, o := range r.Entries {
+			if o != en {
+				q.Others = append(q.Others, o.Entry)
+			}
+		}
+	})
+	stop, err := e.deps.Policy(context.Background(), q)
+	if err != nil {
+		e.decide(l.src, en, "error", "règles de réupload des teams illisibles, rien n'est publié : "+err.Error(), "")
+		return true
+	}
+	if stop != nil {
+		e.decide(l.src, en, "review", stop.Label+" : "+stop.Motive, "")
+		return true
+	}
+	return false
+}
+
 func contains(list []string, s string) bool {
 	for _, x := range list {
 		if x == s {
@@ -421,6 +457,10 @@ func (e *Engine) processReady(l *lot, en *Entry) {
 	summary := p.Summary
 	if summary == "" {
 		summary = p.Fields["releaseName"]
+	}
+	// La fiche gardée a pu changer le nom : les deux noms passent la règle.
+	if e.policyStopped(l, en, p.Fields["releaseName"]) {
+		return
 	}
 	if r.Options.Sim {
 		e.set(func(*Run) { en.Detail = "serait publiée avec ta fiche : " + summary })

@@ -36,6 +36,7 @@ func (s *Server) routesPublish() {
 	s.mux.HandleFunc("POST /ui/pub/{id}/client", s.pubClient)
 	s.mux.HandleFunc("POST /ui/pub/{id}/music", s.pubMusic)
 	s.mux.HandleFunc("POST /ui/pub/{id}/publish", s.pubPublish)
+	s.mux.HandleFunc("POST /ui/pub/{id}/policy", s.pubPolicy)
 	s.mux.HandleFunc("POST /ui/pub/{id}/seed-existing", s.pubSeedExisting)
 }
 
@@ -452,7 +453,7 @@ func (s *Server) pubPublish(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, errors.New("choisis une catégorie"))
 		return
 	}
-	if err := s.pub.Publish(r.PathValue("id"), fields); err != nil {
+	if err := s.publishGuarded(r.PathValue("id"), fields); err != nil {
 		fail(w, http.StatusConflict, err)
 		return
 	}

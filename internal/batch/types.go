@@ -44,6 +44,28 @@ type Work struct {
 	PosterURL     *string `json:"posterUrl"`
 }
 
+// PolicyQuery : de quoi trouver la règle de réupload d'une release. Names :
+// ses noms (dossier ou fichier, nom de release choisi) ; Size et Files :
+// sa taille et son nombre de fichiers, pour reconnaître un detag ; Others :
+// les autres releases du lot, copies taguées possibles de celle-ci.
+// Path et Local : l'emplacement de la release, et s'il est sur ce PC (ses
+// voisines du même dossier sont alors lues aussi).
+type PolicyQuery struct {
+	Names  []string
+	Size   int64
+	Files  int
+	Others []releases.Entry
+	Path   string
+	Local  bool
+}
+
+// PolicyStop : la règle qui interdit la publication, comme la pastille de
+// « Pas sur V3X » (Label) et sa raison en clair (Motive).
+type PolicyStop struct {
+	Label  string
+	Motive string
+}
+
 // File : un fichier de la release (chemin dans la release, taille).
 type File struct {
 	Rel  string

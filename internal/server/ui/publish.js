@@ -20,6 +20,7 @@ const pub = {
   book: null, // livre : { ref } (lien Open Library ou ISBN)
   versionsKey: "", // dernière demande des versions déjà sur V3X
   dirty: {}, // champs retouchés par le membre : jamais écrasés par la fiche
+  policy: null, // règle de réupload de V3X qui bloque la publication (checkPolicy)
   ficheSeq: 0,
   previewSeq: 0,
   timer: null,
@@ -375,6 +376,7 @@ async function choose(path, source, opts) {
     $("#f-name").value = releaseNameOf(j);
     if (j.nameFromVideo) toast("Nom de release repris de la vidéo : le nom du dossier n'en est pas un.");
     renderJob();
+    checkPolicy();
     runMediaInfo();
     window.musicSetup();
     pub.localNfo = await localNfoOf(j);
@@ -468,6 +470,8 @@ function resetForm() {
   pub.versionsKey = "";
   pub.keptPoster = "";
   pub.localNfo = "";
+  pub.policy = null;
+  $("#job-policy").classList.add("hidden");
   pub.dirty = {};
   for (const id of ["#f-name", "#f-title", "#f-season", "#f-desc", "#f-nfo", "#f-vt", "#tmdb-q", "#game-q", "#book-q"]) $(id).value = "";
   $("#game-results").replaceChildren();
@@ -1336,15 +1340,46 @@ function renderBar() {
   const go = $("#pub-go");
   let txt;
   if (j.state === "publishing") txt = "Publication en cours…";
+  else if (pub.policy) txt = "Publication bloquée : " + pub.policy.label;
   else if (miss.length) txt = "Il manque : " + miss.join(", ");
   else if (j.state === "hashing") txt = "Fiche prête. Le .torrent se termine : " + Math.round((j.hashed / j.total) * 100) + " %";
   else txt = "Tout est prêt.";
   $("#pub-bar-txt").textContent = txt;
-  go.disabled = miss.length > 0 || j.state !== "ready";
+  go.disabled = !!pub.policy || miss.length > 0 || j.state !== "ready";
   // Garder pour le lot : la fiche complète suffit, le .torrent peut finir plus tard.
   const keep = $("#pub-keep");
   keep.classList.toggle("hidden", !pub.fromLot);
-  keep.disabled = miss.length > 0 || j.state === "publishing";
+  keep.disabled = !!pub.policy || miss.length > 0 || j.state === "publishing";
+}
+
+// Règles de réupload de V3X (team qui l'interdit ou le soumet à son accord,
+// groupe refusé, detag de l'une d'elles) : vérifiées par D3X dès l'ouverture
+// de la release et à chaque changement de son nom, quelle que soit son
+// origine (dossier choisi à la main compris). Publier et « Garder pour le
+// lot » restent bloqués tant qu'une règle s'applique ; D3X refuse aussi la
+// publication de son côté.
+let policyTimer = 0;
+function checkPolicySoon() {
+  clearTimeout(policyTimer);
+  policyTimer = setTimeout(checkPolicy, 600);
+}
+
+async function checkPolicy() {
+  const j = pub.job;
+  if (!j) return;
+  const name = $("#f-name").value.trim();
+  try {
+    const r = await api("/ui/pub/" + j.id + "/policy", { name });
+    if (!pub.job || pub.job.id !== j.id) return;
+    pub.policy = r.stop || null;
+  } catch (e) {
+    if (e.message === "session") return;
+    pub.policy = null;
+  }
+  const n = $("#job-policy");
+  n.classList.toggle("hidden", !pub.policy);
+  if (pub.policy) n.textContent = pub.policy.label + " : " + pub.policy.motive + ".";
+  renderBar();
 }
 
 async function keepForLot() {
@@ -1613,7 +1648,7 @@ function bindPublish() {
   });
   $("#f-leaf").addEventListener("change", () => { pub.dirty.category = true; loadFicheSoon(); renderBar(); });
   $("#f-vt").addEventListener("input", renderBar);
-  $("#f-name").addEventListener("input", () => { pub.dirty.name = true; loadFicheSoon(); renderBar(); });
+  $("#f-name").addEventListener("input", () => { pub.dirty.name = true; loadFicheSoon(); checkPolicySoon(); renderBar(); });
   for (const [id, key] of [["#f-title", "title"], ["#f-season", "season"], ["#f-nfo", "nfo"], ["#f-lang", "language"]]) {
     $(id).addEventListener("input", () => { pub.dirty[key] = true; renderBar(); });
   }

@@ -152,6 +152,9 @@ func Entries(paths []string, exclude []string) []Entry {
 	return out
 }
 
+// EntryOf : une release de ce PC (fichier ou dossier), comme List la voit.
+func EntryOf(full string, exclude []string) Entry { return entryOf(full, exclude) }
+
 func entryOf(full string, exclude []string) Entry {
 	be := Entry{Name: filepath.Base(full), Path: full}
 	if st, err := os.Stat(full); err == nil {

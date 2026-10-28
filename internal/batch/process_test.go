@@ -388,3 +388,87 @@ func TestProcessCases(t *testing.T) {
 		}
 	})
 }
+
+// Règles de réupload (1.1.41) : toute release du lot passe la même
+// vérification, avant le hachage, qu'elle vienne d'un dossier parcouru ou
+// d'une fiche gardée ; les autres releases du lot comptent comme copies.
+func TestProcessPolicy(t *testing.T) {
+	tagged := releases.Entry{Name: "Film (1992) - 1080p x264 ac3 mHDgz.mkv", Path: "/r/Film (1992) - 1080p x264 ac3 mHDgz.mkv", Video: true, Size: 3 << 30, Files: 1}
+	detag := releases.Entry{Name: "Film (1992).mkv", Path: "/r/Film (1992).mkv", Video: true, Size: 3 << 30, Files: 1}
+	free := releases.Entry{Name: "Libre.2021.1080p.WEB.x264-LIBRE", Path: "/r/Libre.2021.1080p.WEB.x264-LIBRE", Video: true, Size: 1 << 30, Files: 1}
+
+	d, p := happy(tagged, detag, free)
+	var mu sync.Mutex
+	var seen []PolicyQuery
+	d.policy = func(q PolicyQuery) (*PolicyStop, error) {
+		mu.Lock()
+		seen = append(seen, q)
+		mu.Unlock()
+		for _, n := range q.Names {
+			if strings.Contains(n, "mHDgz") {
+				return &PolicyStop{Label: "Réupload interdit · mHDgz", Motive: "la team mHDgz n'autorise pas le réupload de ses releases, D3X ne la publie pas"}, nil
+			}
+		}
+		for _, o := range q.Others {
+			if strings.Contains(o.Name, "mHDgz") && o.Size == q.Size && o.Files == q.Files {
+				return &PolicyStop{Label: "Detag · Réupload interdit · mHDgz", Motive: "copie sans le tag"}, nil
+			}
+		}
+		return nil, nil
+	}
+	r := run(t, quick(d), Options{}, tagged.Path, detag.Path, free.Path)
+	got := map[string]*Entry{}
+	for _, en := range r.Entries {
+		got[en.Path] = en
+	}
+	if en := got[tagged.Path]; en.State != "review" || !strings.HasPrefix(en.Detail, "Réupload interdit · mHDgz : ") {
+		t.Errorf("taguée : %+v", en)
+	}
+	if en := got[detag.Path]; en.State != "review" || !strings.HasPrefix(en.Detail, "Detag · Réupload interdit · mHDgz : ") {
+		t.Errorf("detag : %+v", en)
+	}
+	if en := got[free.Path]; en.State != "published" {
+		t.Errorf("libre : %+v", en)
+	}
+	// Les deux releases refusées ne sont jamais hachées.
+	if p.starts != 1 {
+		t.Errorf("%d publications démarrées, attendu 1", p.starts)
+	}
+	for _, q := range seen {
+		if !q.Local || q.Path == "" {
+			t.Errorf("requête sans emplacement : %+v", q)
+		}
+	}
+	for _, e := range d.eventsCopy() {
+		if e.Path == detag.Path && e.Kind != "batch_review" {
+			t.Errorf("journal du detag : %+v", e)
+		}
+	}
+
+	// Règles illisibles : rien ne part, la release est en erreur.
+	d, p = happy(free)
+	d.policy = func(PolicyQuery) (*PolicyStop, error) { return nil, errors.New("site injoignable") }
+	r = run(t, quick(d), Options{}, free.Path)
+	if en := r.Entries[0]; en.State != "error" || !strings.Contains(en.Detail, "règles de réupload des teams illisibles") || p.starts != 0 {
+		t.Errorf("règles illisibles : %+v, %d démarrages", en, p.starts)
+	}
+
+	// Fiche gardée : le nom choisi dans Publier passe aussi la règle.
+	d, p = happy(releases.Entry{Name: "X", Path: "/r/X", Video: true, Size: 10})
+	d.last = map[string]journal.Event{"/r/X": {Kind: "batch_ready"}}
+	d.prepared = func(key string) (*Prepared, bool) {
+		return &Prepared{Name: "X", Fields: map[string]string{"releaseName": "X.2020.1080p.WEB.x264-mHDgz", "categoryId": "11"}}, true
+	}
+	d.policy = func(q PolicyQuery) (*PolicyStop, error) {
+		for _, n := range q.Names {
+			if strings.Contains(n, "mHDgz") {
+				return &PolicyStop{Label: "Réupload interdit · mHDgz", Motive: "non"}, nil
+			}
+		}
+		return nil, nil
+	}
+	r = run(t, quick(d), Options{}, "/r/X")
+	if en := r.Entries[0]; en.State != "review" || !strings.HasPrefix(en.Detail, "Réupload interdit · mHDgz") || p.starts != 0 {
+		t.Errorf("fiche gardée : %+v, %d démarrages", en, p.starts)
+	}
+}

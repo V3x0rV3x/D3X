@@ -39,6 +39,7 @@ type fakeDeps struct {
 	series     func(title string) *Work
 	mediainfo  func(ctx context.Context, req mediainfo.Request) (string, error)
 	pubRead    func(id string, index int) ([]byte, int64, error)
+	policy     func(q PolicyQuery) (*PolicyStop, error)
 	cancelled  []string
 	dropped    []string
 }
@@ -128,6 +129,12 @@ func (d *fakeDeps) RequestsFor(_ context.Context, name string) (json.RawMessage,
 		return nil, nil
 	}
 	return d.requests(name)
+}
+func (d *fakeDeps) Policy(_ context.Context, q PolicyQuery) (*PolicyStop, error) {
+	if d.policy == nil {
+		return nil, nil
+	}
+	return d.policy(q)
 }
 func (d *fakeDeps) MBDecide(_ context.Context, jobID string) (*musicbrainz.Result, error) {
 	if d.mb == nil {

@@ -37,6 +37,10 @@ type Deps interface {
 	Redo(ctx context.Context, name string, size int64, tmdbRef, categorySlug string) (string, error)
 	// RequestsFor : les demandes ouvertes auxquelles le nom répond (JSON pour la page).
 	RequestsFor(ctx context.Context, name string) (json.RawMessage, error)
+	// Policy : la règle de réupload de V3X qui interdit de publier cette release
+	// (team qui l'interdit ou le soumet à son accord, groupe refusé, detag de
+	// l'une d'elles) ; nil si rien ne l'interdit.
+	Policy(ctx context.Context, q PolicyQuery) (*PolicyStop, error)
 
 	MBDecide(ctx context.Context, jobID string) (*musicbrainz.Result, error)
 	Prepared(key string) (*Prepared, bool)
