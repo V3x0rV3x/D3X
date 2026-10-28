@@ -70,6 +70,16 @@ window.musicSetup = () => {
   const on = isAlbum();
   $("#tmdb-field").classList.toggle("hidden", on);
   $("#mb-field").classList.toggle("hidden", !on);
+  // Vidéos ET pistes audio : D3X tranche au poids, le membre corrige d'un clic
+  // (Indrop, 28/10/26 : une discographie avec un clip partait en film).
+  const both = !!(pub.job && pub.job.hasVideo && pub.job.hasAudio);
+  $("#kind-field").classList.toggle("hidden", !both);
+  if (both) {
+    $("#kind-txt").textContent = on
+      ? "D3X la traite comme un album : ses pistes audio pèsent plus lourd que ses vidéos."
+      : "Cette release contient aussi des pistes audio.";
+    $("#kind-go").textContent = on ? "C'est une vidéo" : "C'est de la musique";
+  }
   pub.mb = null;
   $("#mb-results").replaceChildren();
   $("#mb-picked").classList.add("hidden");
@@ -300,7 +310,27 @@ async function dgPick(c, btn) {
   }
 }
 
+// Bascule album / vidéo : D3X relit les pistes (ou les oublie), MediaInfo
+// repasse sur le bon fichier, puis la fiche est redemandée à V3X.
+async function switchKind() {
+  const j = pub.job;
+  if (!j) return;
+  const btn = $("#kind-go");
+  btn.disabled = true;
+  try {
+    pub.job = await api("/ui/pub/" + j.id + "/music", { music: !isAlbum() });
+    pub.mediainfo = "";
+    window.musicSetup();
+    runMediaInfo();
+  } catch (e) {
+    if (e.message !== "session") toast(e.message, "bad");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 function bindMusic() {
+  $("#kind-go").addEventListener("click", switchKind);
   $("#dg-go").addEventListener("click", dgSearch);
   $("#mb-go").addEventListener("click", mbGo);
   $("#mb-q").addEventListener("keydown", (e) => { if (e.key === "Enter") mbGo(); });

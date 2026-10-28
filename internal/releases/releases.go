@@ -163,13 +163,16 @@ func entryOf(full string, exclude []string) Entry {
 	} else {
 		be.Path, be.Size, be.Files = p.Root, p.Total, len(p.Files)
 		be.Flat = !p.Single
+		var videoBytes, audioBytes int64
 		for _, f := range p.Files {
 			ext := strings.ToLower(filepath.Ext(f.Rel))
 			if VideoExt[ext] {
 				be.Video = true
+				videoBytes += f.Size
 			}
 			if audio.IsAudio(f.Rel) {
 				be.Audio = true
+				audioBytes += f.Size
 			}
 			if execExt[ext] {
 				be.Exec = true
@@ -178,9 +181,15 @@ func entryOf(full string, exclude []string) Entry {
 				be.Flat = false
 			}
 		}
-	}
-	if be.Video {
-		be.Audio = false
+		// Vidéo OU album, jamais les deux : l'audio l'emporte quand il pèse
+		// plus lourd que la vidéo (discographie avec un clip), comme dans Publier.
+		if be.Audio && be.Video {
+			if audio.Dominates(audioBytes, videoBytes) {
+				be.Video = false
+			} else {
+				be.Audio = false
+			}
+		}
 	}
 	// Album en plusieurs disques (CD1, Disc 2…) : un seul album, pas une
 	// collection.

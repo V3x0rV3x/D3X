@@ -26,6 +26,7 @@ const pub = {
   shown: false,
   published: false,
   fromLot: "", // release du Lot ouverte par « Revoir » (sinon vide)
+  xsKey: "", // ligne de « Pas sur V3X » d'où vient la release (sinon vide)
   format: "standard", // standard (BBCode) ou html, si V3X l'autorise au membre
   localNfo: "", // .nfo de la release, lu sur le disque (option « Reprendre le .nfo »)
 };
@@ -137,7 +138,7 @@ const ERRORS = {
   review_quota: "tu as déjà trop de releases en attente de validation : attends qu'elles soient revues",
   tmdb_required: "une fiche TMDB est obligatoire pour un film ou une série (ou coche « Pas de fiche TMDB » si elle n'existe vraiment pas)",
   tmdb_link_invalid: "le lien TMDB n'est pas valide",
-  nfo_required: "le NFO est obligatoire pour un film ou une série",
+  nfo_required: "le NFO est obligatoire pour un film, une série ou de la musique (pour la musique, n'importe quel NFO : celui de la release, la liste des pistes ou le MediaInfo d'une piste)",
   mediainfo_required: "le NFO doit contenir un vrai MediaInfo (pistes vidéo et audio mesurées)",
   resolution_too_low: "la résolution est sous le minimum de V3X",
   ddl_source: "la release porte la marque d'un site de téléchargement direct",
@@ -363,6 +364,7 @@ async function choose(path, source, opts) {
     if (old && !old.published && old.id !== j.id) api("/ui/pub/" + old.id + "/cancel", {}).catch(() => { /* rien */ });
     resetForm();
     pub.fromLot = opts && opts.fromLot ? path : "";
+    pub.xsKey = (opts && opts.xsKey) || "";
     pub.job = j;
     pub.published = false;
     $("#pub-pick").classList.add("hidden");
@@ -597,7 +599,8 @@ function renderJob() {
   $("#st-hash-bar").style.width = (j.total ? Math.round((j.hashed / j.total) * 100) : 0) + "%";
   $("#st-hash .mini").classList.toggle("hidden", j.state !== "hashing");
 
-  const miText = { idle: "En attente.", running: "Lecture du fichier vidéo…", done: "Lu sur le plus gros fichier vidéo.", none: "Aucun fichier vidéo : pas de MediaInfo.", error: "Lecture impossible : colle-le à la main dans le NFO." }[pub.miState];
+  const what = isAlbum() ? "de la piste" : "du fichier vidéo";
+  const miText = { idle: "En attente.", running: "Lecture " + what + "…", done: isAlbum() ? "Lu sur la plus grosse piste." : "Lu sur le plus gros fichier vidéo.", none: "Aucun fichier vidéo : pas de MediaInfo.", error: "Lecture impossible : colle-le à la main dans le NFO." }[pub.miState];
   setStep("#st-mi", { running: "run", done: "ok", error: "bad", none: "", idle: "" }[pub.miState], miText);
 
   pubClients(j);
@@ -1532,16 +1535,44 @@ window.pubSources = () => {
   box.classList.toggle("hidden", !shown || !!pub.job);
 };
 
-// Ouvre une release dans Publier (depuis « Pas sur V3X »).
-window.pubOpen = async (path, source) => {
+// Ouvre une release dans Publier (depuis « Pas sur V3X », sa ligne `key`).
+window.pubOpen = async (path, source, key) => {
   if (pub.job && !pub.job.published) {
     setView("publish");
     return toast("Une fiche est déjà ouverte dans Publier : publie-la ou « Changer de release » d'abord.", "bad");
   }
   if (pub.job) await cancelJob();
   setView("publish");
-  await choose(path, source);
+  await choose(path, source, { xsKey: key || "" });
 };
+
+// « Ignorer cette release » depuis Publier (Indrop, 28/10/26) : une version
+// est déjà sur V3X et le membre ne publiera pas la sienne. Écartée du Lot
+// (comme son bouton Ignorer) et, si elle vient de « Pas sur V3X », de cette
+// liste aussi, sans repasser par le cross-seed. Puis retour d'où elle venait.
+async function ignoreRelease() {
+  const j = pub.job;
+  if (!j || j.published) return;
+  const btn = $("#versions-ignore");
+  btn.disabled = true;
+  const xs = pub.xsKey;
+  const lot = !!pub.fromLot;
+  try {
+    await api("/ui/batch/decision", { path: pub.fromLot || j.path, source: pub.source, name: j.name, kind: "batch_ignored", detail: "écartée depuis Publier" });
+  } catch (e) {
+    btn.disabled = false;
+    if (e.message !== "session") toast(e.message, "bad");
+    return;
+  }
+  if (xs) window.xsIgnore(xs);
+  pub.fromLot = "";
+  pub.xsKey = "";
+  await cancelJob();
+  btn.disabled = false;
+  toast(xs ? "Release ignorée : elle ne revient plus dans « Pas sur V3X » ni dans le Lot." : "Release ignorée : le Lot ne la proposera plus.", "ok");
+  if (xs) setView("cross");
+  else if (lot) setView("batch");
+}
 
 window.pubShow = async (on) => {
   pub.shown = on;
@@ -1561,6 +1592,7 @@ function bindPublish() {
   $("#fs-go").addEventListener("click", () => browse($("#fs-path").value));
   $("#fs-path").addEventListener("keydown", (e) => { if (e.key === "Enter") browse($("#fs-path").value); });
   $("#job-cancel").addEventListener("click", cancelJob);
+  $("#versions-ignore").addEventListener("click", ignoreRelease);
   $("#map-save").addEventListener("click", saveMap);
   $("#pub-client").addEventListener("change", pickClient);
   $("#tmdb-go").addEventListener("click", searchTmdb);

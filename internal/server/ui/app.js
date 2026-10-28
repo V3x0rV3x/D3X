@@ -1110,6 +1110,18 @@ function toggleIgnored(r) {
   renderRows();
 }
 
+// Ignorée depuis Publier (Indrop, 28/10/26) : même liste que le bouton de la
+// ligne, sans repasser par le cross-seed.
+window.xsIgnore = (key) => {
+  if (!key) return;
+  const s = ignoredSet();
+  s.add(key);
+  ui.picked.delete(key);
+  ui.selected.delete(key);
+  try { localStorage.setItem("d3x-ignored", JSON.stringify([...s])); } catch (e) { /* rien */ }
+  renderRows();
+};
+
 // Relais ouverts (releases rares lâchées, prime au repreneur).
 async function loadRelays(sig) {
   ui.relSig = sig;
@@ -1207,12 +1219,25 @@ async function localPaths(rows) {
   return { ok, bad };
 }
 
+// Detag d'une team qui interdit le réupload, ou d'un groupe refusé : V3X ne
+// le verrait pas, D3X ne le publie pas (ni Publier ni le Lot).
+function detagBlocked(r) {
+  const p = ui.pols[r.key];
+  return !!(p && p.detag && (p.policy === "forbidden" || p.policy === "banned"));
+}
+
+function detagText(r) {
+  const p = ui.pols[r.key];
+  return "Copie sans tag d'une release de " + p.team + (p.policy === "banned" ? ", groupe refusé sur V3X" : ", qui interdit le réupload") + " : D3X ne la publie pas.";
+}
+
 async function publishRow(r, btn) {
+  if (detagBlocked(r)) return toast(detagText(r), "bad");
   if (btn) btn.disabled = true;
   try {
     const { ok, bad } = await localPaths([r]);
     if (bad.length) return toast(bad[0].error + ".", "bad");
-    window.pubOpen(ok[0].path, ok[0].source);
+    window.pubOpen(ok[0].path, ok[0].source, r.key);
   } catch (e) {
     if (e.message !== "session") toast(e.message, "bad");
   } finally {
@@ -1221,7 +1246,10 @@ async function publishRow(r, btn) {
 }
 
 async function lotPicked() {
-  const rows = ui.rows.filter((r) => ui.picked.has(r.key));
+  const all = ui.rows.filter((r) => ui.picked.has(r.key));
+  const rows = all.filter((r) => !detagBlocked(r));
+  const off = all.length - rows.length;
+  if (off) toast(off + " " + plural(off, "copie sans tag laissée", "copies sans tag laissées") + " de côté : release d'une team qui interdit le réupload, ou d'un groupe refusé.", "bad");
   if (!rows.length) return;
   const btn = $("#pick-lot");
   btn.disabled = true;
@@ -1407,12 +1435,15 @@ function rowEl(r) {
     const p = ui.pols[r.key];
     const banned = p.policy === "banned";
     const forbid = banned || p.policy === "forbidden";
-    const b = el("span", "pill " + (forbid ? "bad" : "warn"), (banned ? "Groupe refusé sur V3X" : forbid ? "Réupload interdit" : "Réupload sur accord") + " · " + p.team);
-    b.title = banned
-      ? "Le groupe " + p.team + " est refusé sur V3X" + (p.reason ? " : " + p.reason : "") + ". V3X refusera la publication."
+    const b = el("span", "pill " + (forbid ? "bad" : "warn"), (p.detag ? "Detag · " : "") + (banned ? "Groupe refusé sur V3X" : forbid ? "Réupload interdit" : "Réupload sur accord") + " · " + p.team);
+    // Detag (Ekhstaz, 27/10/26) : sans le tag, V3X ne saurait pas la refuser ;
+    // c'est D3X qui la reconnaît à la taille d'une copie taguée.
+    const copy = p.detag ? "Cette release est une copie sans le tag (même taille au fichier près que « " + p.detag + " »). " : "";
+    b.title = copy + (banned
+      ? "Le groupe " + p.team + " est refusé sur V3X" + (p.reason ? " : " + p.reason : "") + (p.detag ? ", detag compris : ne la publie pas." : ". V3X refusera la publication.")
       : forbid
-        ? "La team " + p.team + " n'autorise pas le réupload de ses releases : V3X refusera la publication."
-        : "La team " + p.team + " demande son accord avant un réupload : écris-lui sur V3X avant de publier.";
+        ? "La team " + p.team + " n'autorise pas le réupload de ses releases" + (p.detag ? ", detag compris : ne la publie pas." : " : V3X refusera la publication.")
+        : "La team " + p.team + " demande son accord avant un réupload" + (p.detag ? ", detag compris" : "") + " : écris-lui sur V3X avant de publier.");
     const box = el("div", "reqs");
     box.append(b);
     tdN.append(box);

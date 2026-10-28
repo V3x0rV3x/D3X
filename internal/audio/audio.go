@@ -50,6 +50,15 @@ func IsAudio(name string) bool {
 	return ok
 }
 
+// Dominates dit si une release est un album d'après le poids de ses pistes et
+// de ses vidéos : sans vidéo, dès qu'elle a une piste ; avec, quand l'audio
+// pèse plus lourd. Une discographie qui contient un clip ou un live reste un
+// album (Indrop, 28/10/26) ; un film livré avec sa bande originale reste un
+// film. Publier permet de corriger un cas limite à la main.
+func Dominates(audioBytes, videoBytes int64) bool {
+	return audioBytes > 0 && audioBytes > videoBytes
+}
+
 // ReadFile lit une piste. Une piste illisible renvoie son erreur dans Track.
 func ReadFile(abs, rel string) Track {
 	t := Track{Rel: rel}

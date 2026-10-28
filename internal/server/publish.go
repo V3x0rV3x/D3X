@@ -34,6 +34,7 @@ func (s *Server) routesPublish() {
 	s.mux.HandleFunc("POST /ui/pub/{id}/fiche", s.pubFiche)
 	s.mux.HandleFunc("POST /ui/pub/{id}/clientdir", s.pubClientDir)
 	s.mux.HandleFunc("POST /ui/pub/{id}/client", s.pubClient)
+	s.mux.HandleFunc("POST /ui/pub/{id}/music", s.pubMusic)
 	s.mux.HandleFunc("POST /ui/pub/{id}/publish", s.pubPublish)
 	s.mux.HandleFunc("POST /ui/pub/{id}/seed-existing", s.pubSeedExisting)
 }
@@ -417,6 +418,21 @@ func (s *Server) pubClient(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.pub.SetClient(r.PathValue("id"), in.Client); err != nil {
+		fail(w, http.StatusBadRequest, err)
+		return
+	}
+	s.pubGet(w, r)
+}
+
+// pubMusic bascule la release en album ou en vidéo (publish.SetMusic).
+func (s *Server) pubMusic(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Music bool `json:"music"`
+	}
+	if !decode(w, r, 1<<12, &in) {
+		return
+	}
+	if err := s.pub.SetMusic(r.PathValue("id"), in.Music); err != nil {
 		fail(w, http.StatusBadRequest, err)
 		return
 	}

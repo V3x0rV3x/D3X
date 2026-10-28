@@ -231,7 +231,7 @@ var errorTexts = map[string]string{
 	"review_quota":             "tu as déjà trop de releases en attente de validation : attends qu'elles soient revues",
 	"tmdb_required":            "une fiche TMDB est obligatoire pour un film ou une série (ou coche « Pas de fiche TMDB » si elle n'existe vraiment pas)",
 	"tmdb_link_invalid":        "le lien TMDB n'est pas valide",
-	"nfo_required":             "le NFO est obligatoire pour un film ou une série",
+	"nfo_required":             "le NFO est obligatoire pour un film, une série ou de la musique (pour la musique, n'importe quel NFO : celui de la release, la liste des pistes ou le MediaInfo d'une piste)",
 	"mediainfo_required":       "le NFO doit contenir un vrai MediaInfo (pistes vidéo et audio mesurées)",
 	"resolution_too_low":       "la résolution est sous le minimum de V3X",
 	"ddl_source":               "la release porte la marque d'un site de téléchargement direct",

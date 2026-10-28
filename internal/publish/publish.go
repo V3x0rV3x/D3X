@@ -45,6 +45,7 @@ type File struct {
 	Rel   string `json:"rel"`
 	Size  int64  `json:"size"`
 	Video bool   `json:"video"`
+	Audio bool   `json:"audio,omitempty"`
 }
 
 // Job est une publication en cours.
@@ -61,16 +62,20 @@ type Job struct {
 	// NameFromVideo : nom de release proposé à la place de celui du dossier,
 	// repris de sa vidéo principale (nameFromVideo) ; vide sinon.
 	NameFromVideo string `json:"nameFromVideo,omitempty"`
-	// Album : tags et qualité des pistes, quand la release en a.
-	Audio     *audio.Album `json:"audio,omitempty"`
-	Duplicate *v3x.Match   `json:"duplicate,omitempty"`
-	Gone      *v3x.Gone    `json:"gone,omitempty"`
-	State     string       `json:"state"`
-	Hashed    int64        `json:"hashed"`
-	FromCache bool         `json:"fromCache"`
-	InfoHash  string       `json:"infoHash,omitempty"`
-	Error     string       `json:"error,omitempty"`
-	ErrorBody string       `json:"errorBody,omitempty"`
+	// Album : tags et qualité des pistes, quand la release en est un.
+	Audio *audio.Album `json:"audio,omitempty"`
+	// La release a des vidéos et des pistes audio : la page propose de la
+	// basculer d'album en vidéo, ou l'inverse (SetMusic).
+	HasVideo  bool       `json:"hasVideo,omitempty"`
+	HasAudio  bool       `json:"hasAudio,omitempty"`
+	Duplicate *v3x.Match `json:"duplicate,omitempty"`
+	Gone      *v3x.Gone  `json:"gone,omitempty"`
+	State     string     `json:"state"`
+	Hashed    int64      `json:"hashed"`
+	FromCache bool       `json:"fromCache"`
+	InfoHash  string     `json:"infoHash,omitempty"`
+	Error     string     `json:"error,omitempty"`
+	ErrorBody string     `json:"errorBody,omitempty"`
 	// Le client torrent qui seedera la release (identifiant et nom), et où
 	// il voit le dossier qui la contient.
 	Client     string                `json:"client"`
@@ -136,6 +141,74 @@ func nameFromVideo(plan *maketorrent.Plan, main int) string {
 	return base
 }
 
+// kind : la plus grosse vidéo et la plus grosse piste d'une release (-1 si
+// aucune), et si c'est un album (audio.Dominates).
+type kind struct {
+	mainVideo, mainAudio int
+	album                bool
+}
+
+func kindOf(plan *maketorrent.Plan) kind {
+	k := kind{mainVideo: -1, mainAudio: -1}
+	var bestVideo, bestAudio, videoBytes, audioBytes int64 = -1, -1, 0, 0
+	for i, f := range plan.Files {
+		if videoExt[strings.ToLower(path.Ext(f.Rel))] {
+			videoBytes += f.Size
+			if f.Size > bestVideo {
+				bestVideo, k.mainVideo = f.Size, i
+			}
+		}
+		if audio.IsAudio(f.Rel) {
+			audioBytes += f.Size
+			if f.Size > bestAudio {
+				bestAudio, k.mainAudio = f.Size, i
+			}
+		}
+	}
+	k.album = k.mainAudio >= 0 && (k.mainVideo < 0 || audio.Dominates(audioBytes, videoBytes))
+	return k
+}
+
+// SetMusic corrige D3X quand il s'est trompé de genre sur une release qui a
+// des vidéos et des pistes (Indrop, 28/10/26) : en album, les pistes sont
+// lues à la demande et MediaInfo passe sur la plus grosse ; en vidéo, l'album
+// est oublié et MediaInfo repasse sur la plus grosse vidéo.
+func (m *Manager) SetMusic(id string, music bool) error {
+	m.mu.Lock()
+	j := m.jobs[id]
+	m.mu.Unlock()
+	if j == nil {
+		return errors.New("publication inconnue")
+	}
+	k := kindOf(j.plan)
+	if !music {
+		if k.mainVideo < 0 {
+			return errors.New("cette release n'a aucune vidéo")
+		}
+		m.mu.Lock()
+		j.Audio, j.MainFile = nil, k.mainVideo
+		j.NameFromVideo = nameFromVideo(j.plan, k.mainVideo)
+		m.mu.Unlock()
+		return nil
+	}
+	if k.mainAudio < 0 {
+		return errors.New("cette release n'a aucune piste audio")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	a, err := j.src.Audio(ctx, j.plan, j.exclude)
+	if err != nil {
+		return errors.New("pistes illisibles : " + err.Error())
+	}
+	if a == nil || len(a.Tracks) == 0 {
+		return errors.New("aucune piste audio lisible dans cette release")
+	}
+	m.mu.Lock()
+	j.Audio, j.MainFile, j.NameFromVideo = a, k.mainAudio, ""
+	m.mu.Unlock()
+	return nil
+}
+
 func newID() string {
 	b := make([]byte, 8)
 	_, _ = rand.Read(b)
@@ -160,31 +233,22 @@ func (m *Manager) Start(src source.Source, where string) (*Job, error) {
 		return nil, err
 	}
 	j := &Job{ID: newID(), Path: plan.Root, Name: plan.Name, Single: plan.Single, Skipped: plan.Skipped, Total: plan.Total, PieceLength: plan.PieceLength, MainFile: -1, State: StHashing, plan: plan, src: src, exclude: exclude, Source: src.Label()}
-	var best, bestAudio int64 = -1, -1
-	mainAudio, hasAudio := -1, false
-	for i, f := range plan.Files {
-		isVideo := videoExt[strings.ToLower(path.Ext(f.Rel))]
-		j.Files = append(j.Files, File{Rel: f.Rel, Size: f.Size, Video: isVideo})
-		if isVideo && f.Size > best {
-			best, j.MainFile = f.Size, i
-		}
-		if audio.IsAudio(f.Rel) {
-			hasAudio = true
-			if f.Size > bestAudio {
-				bestAudio, mainAudio = f.Size, i
-			}
-		}
+	for _, f := range plan.Files {
+		ext := strings.ToLower(path.Ext(f.Rel))
+		j.Files = append(j.Files, File{Rel: f.Rel, Size: f.Size, Video: videoExt[ext], Audio: audio.IsAudio(f.Rel)})
 	}
-	if j.MainFile >= 0 {
-		j.NameFromVideo = nameFromVideo(plan, j.MainFile)
-	}
-	// Album (pas de vidéo) : tags et qualité lus là où sont les fichiers ;
-	// MediaInfo sur la plus grosse piste.
-	if j.MainFile < 0 && hasAudio {
-		j.MainFile = mainAudio
+	k := kindOf(plan)
+	j.HasVideo, j.HasAudio = k.mainVideo >= 0, k.mainAudio >= 0
+	if k.album {
+		// Album (sans vidéo, ou l'audio pèse plus lourd) : tags et qualité lus
+		// là où sont les fichiers ; MediaInfo sur la plus grosse piste.
+		j.MainFile = k.mainAudio
 		if a, err := src.Audio(ctx0, plan, exclude); err == nil {
 			j.Audio = a
 		}
+	} else if k.mainVideo >= 0 {
+		j.MainFile = k.mainVideo
+		j.NameFromVideo = nameFromVideo(plan, j.MainFile)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)

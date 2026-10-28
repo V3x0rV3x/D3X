@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math/rand"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/V3x0rV3x/D3X/internal/audio"
 	"github.com/V3x0rV3x/D3X/internal/bencode"
 	"github.com/V3x0rV3x/D3X/internal/client"
 	"github.com/V3x0rV3x/D3X/internal/config"
@@ -445,5 +447,70 @@ func TestNameFromVideo(t *testing.T) {
 		if got := nameFromVideo(c.p, c.main); got != c.want {
 			t.Errorf("%s : %q, attendu %q", c.name, got, c.want)
 		}
+	}
+}
+
+func TestKindOf(t *testing.T) {
+	plan := func(files ...maketorrent.Entry) *maketorrent.Plan { return &maketorrent.Plan{Files: files} }
+	flac := func(n string, size int64) maketorrent.Entry { return maketorrent.Entry{Rel: n + ".flac", Size: size} }
+	for _, c := range []struct {
+		name       string
+		p          *maketorrent.Plan
+		video, aud int
+		album      bool
+	}{
+		{"film", plan(maketorrent.Entry{Rel: "Film.2020.1080p.mkv", Size: 8 << 30}), 0, -1, false},
+		{"album", plan(flac("01", 30<<20), flac("02", 40<<20)), -1, 1, true},
+		// Indrop, 28/10/26 : discographie avec un clip, l'audio pèse plus lourd.
+		{"discographie avec un clip", plan(flac("01", 400<<20), flac("02", 500<<20), maketorrent.Entry{Rel: "Clip.mp4", Size: 200 << 20}), 2, 1, true},
+		// Un film livré avec sa bande originale reste un film.
+		{"film et sa bande originale", plan(maketorrent.Entry{Rel: "Film.2020.1080p.mkv", Size: 8 << 30}, flac("BO", 300<<20)), 0, 1, false},
+		{"rien", plan(maketorrent.Entry{Rel: "livre.epub", Size: 1 << 20}), -1, -1, false},
+	} {
+		k := kindOf(c.p)
+		if k.mainVideo != c.video || k.mainAudio != c.aud || k.album != c.album {
+			t.Errorf("%s : vidéo %d piste %d album %v, attendu %d %d %v", c.name, k.mainVideo, k.mainAudio, k.album, c.video, c.aud, c.album)
+		}
+	}
+}
+
+// audioSource : une source dont l'analyse des pistes renvoie un album.
+type audioSource struct {
+	source.Local
+	tracks int
+}
+
+func (a audioSource) Audio(context.Context, *maketorrent.Plan, []string) (*audio.Album, error) {
+	al := &audio.Album{}
+	for i := 0; i < a.tracks; i++ {
+		al.Tracks = append(al.Tracks, audio.Track{Rel: fmt.Sprintf("%02d.flac", i+1)})
+	}
+	return al, nil
+}
+
+func TestSetMusic(t *testing.T) {
+	m := New(nil, nil, "test")
+	plan := &maketorrent.Plan{Name: "Groupe - Live", Files: []maketorrent.Entry{
+		{Rel: "Groupe - Live/Live.mkv", Size: 4 << 30},
+		{Rel: "Groupe - Live/01.flac", Size: 300 << 20},
+	}}
+	m.jobs["j"] = &Job{ID: "j", MainFile: 0, plan: plan, src: audioSource{tracks: 1}}
+	if err := m.SetMusic("j", true); err != nil {
+		t.Fatal(err)
+	}
+	j, _ := m.Get("j")
+	if j.Audio == nil || len(j.Audio.Tracks) != 1 || j.MainFile != 1 {
+		t.Fatalf("en album : audio %v, fichier principal %d", j.Audio, j.MainFile)
+	}
+	if err := m.SetMusic("j", false); err != nil {
+		t.Fatal(err)
+	}
+	j, _ = m.Get("j")
+	if j.Audio != nil || j.MainFile != 0 {
+		t.Fatalf("en vidéo : audio %v, fichier principal %d", j.Audio, j.MainFile)
+	}
+	m.jobs["v"] = &Job{ID: "v", plan: &maketorrent.Plan{Files: []maketorrent.Entry{{Rel: "Film.mkv", Size: 1 << 30}}}, src: audioSource{}}
+	if err := m.SetMusic("v", true); err == nil {
+		t.Fatal("une release sans piste audio ne passe pas en album")
 	}
 }

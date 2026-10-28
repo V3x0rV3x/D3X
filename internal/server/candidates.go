@@ -321,6 +321,91 @@ type policyHit struct {
 	Team   string `json:"team"`             // la team, ou le tag refusé
 	Policy string `json:"policy"`           // forbidden, ask, banned
 	Reason string `json:"reason,omitempty"` // banned : la raison donnée par V3X
+	// Detag : la release n'a pas ce tag dans son nom, mais une copie taguée de
+	// la même taille au fichier près est chez toi (son nom) : c'est la même
+	// release, détaguée ou renommée (Ekhstaz, 27/10/26).
+	Detag string `json:"detag,omitempty"`
+}
+
+// detagMinSize : en dessous, deux releases différentes peuvent avoir la même
+// taille par hasard ; au-dessus, une taille identique à l'octet près désigne
+// la même release (même seuil que les doublons de taille de V3X).
+const detagMinSize = 100 << 20
+
+// policyOf : la règle de V3X qui vise ce nom (groupe refusé, puis team qui
+// interdit le réupload ou le soumet à son accord), d'après son tag de fin.
+func policyOf(name string, banned []v3x.TeamPolicy, byTag map[string]policyHit) (policyHit, bool) {
+	if b := bannedTagOf(name, banned); b != nil {
+		return policyHit{Team: b.Name, Policy: "banned", Reason: b.Reason}, true
+	}
+	if g := releaseGroup(name); g != "" {
+		if h, ok := byTag[strings.ToLower(g)]; ok {
+			return h, true
+		}
+	}
+	// Tag séparé par un espace ou un point (« … x264 ac3 mHDgz.mkv ») :
+	// seulement s'il est celui d'une team qui a une règle.
+	if t := lastToken(name); t != "" {
+		if h, ok := byTag[strings.ToLower(t)]; ok {
+			return h, true
+		}
+	}
+	return policyHit{}, false
+}
+
+// lastToken : le dernier mot du nom, sans extension ni titre entre
+// parenthèses en fin de nom.
+func lastToken(name string) string {
+	base := trailingTitle.ReplaceAllString(strings.TrimSpace(name), "")
+	base = fileExt.ReplaceAllString(base, "")
+	parts := tagParts.Split(base, -1)
+	for i := len(parts) - 1; i >= 0; i-- {
+		if parts[i] != "" {
+			return parts[i]
+		}
+	}
+	return ""
+}
+
+// detagHits : les releases « Pas sur V3X » sans règle propre, de même taille
+// et même nombre de fichiers qu'une copie qui en a une (taguée, dans
+// n'importe quel onglet) : un detag ou un renommage de cette release garde
+// sa règle. Les clés des lignes déjà réglées (hits) ne bougent pas.
+func detagHits(rows []crossseed.Row, hits map[string]policyHit, banned []v3x.TeamPolicy, byTag map[string]policyHit) {
+	type tagged struct {
+		hit  policyHit
+		name string
+	}
+	type sig struct {
+		size  int64
+		files int
+	}
+	src := map[sig]tagged{}
+	for _, row := range rows {
+		if row.Size < detagMinSize {
+			continue
+		}
+		k := sig{row.Size, row.Files}
+		if _, seen := src[k]; seen {
+			continue
+		}
+		if h, ok := policyOf(row.Name, banned, byTag); ok {
+			src[k] = tagged{h, row.Name}
+		}
+	}
+	for _, row := range rows {
+		if row.Status != crossseed.StNone || row.Size < detagMinSize {
+			continue
+		}
+		if _, done := hits[row.Key]; done {
+			continue
+		}
+		if t, ok := src[sig{row.Size, row.Files}]; ok && t.name != row.Name {
+			h := t.hit
+			h.Detag = t.name
+			hits[row.Key] = h
+		}
+	}
 }
 
 // teamPoliciesMatch : pour chaque release « Pas sur V3X », la team de son tag
@@ -354,21 +439,18 @@ func (s *Server) teamPoliciesMatch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	out := map[string]policyHit{}
-	for _, row := range s.engine.Rows() {
+	rows := s.engine.Rows()
+	for _, row := range rows {
 		if row.Status != crossseed.StNone {
 			continue
 		}
-		// Groupe refusé sur V3X (liste du staff, 22/10/26) : avant tout le reste.
-		if b := bannedTagOf(row.Name, banned); b != nil {
-			out[row.Key] = policyHit{Team: b.Name, Policy: "banned", Reason: b.Reason}
-			continue
-		}
-		if g := releaseGroup(row.Name); g != "" {
-			if h, ok := byTag[strings.ToLower(g)]; ok {
-				out[row.Key] = h
-			}
+		// Groupe refusé sur V3X (liste du staff, 22/10/26) avant tout le reste,
+		// puis la team du tag.
+		if h, ok := policyOf(row.Name, banned, byTag); ok {
+			out[row.Key] = h
 		}
 	}
+	detagHits(rows, out, banned, byTag)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"byKey": out})
 }
 

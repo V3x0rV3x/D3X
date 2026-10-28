@@ -232,6 +232,9 @@
     <div class="card hidden" id="pub-form">
       <div class="card-head"><h2>2. La fiche</h2><span class="sub" id="fiche-state"></span></div>
       <div class="grid2">
+        <div class="field span2 hidden" id="kind-field">
+          <p class="hint"><span id="kind-txt"></span> <button class="btn small" type="button" id="kind-go"></button></p>
+        </div>
         <div class="field span2" id="tmdb-field">
           <label for="tmdb-q">Œuvre (TMDB)</label>
           <div class="row">
@@ -282,6 +285,7 @@
           <div class="notice warn hidden" id="versions-redo"></div>
           <ul class="versions" id="versions-list"></ul>
           <p class="hint" id="versions-hint"></p>
+          <p class="hint"><button class="btn small" type="button" id="versions-ignore" title="Tu ne publieras pas ta version : le Lot ne la proposera plus, et « Pas sur V3X » non plus si elle en vient.">Ignorer cette release</button></p>
         </div>
         <div class="field">
           <label for="f-root">Catégorie</label>
@@ -313,7 +317,7 @@
         <div class="field span2 hidden" id="vt-field">
           <label for="f-vt">Rapport VirusTotal</label>
           <textarea id="f-vt" rows="2" spellcheck="false" autocomplete="off" placeholder="https://www.virustotal.com/gui/file/…"></textarea>
-          <p class="hint">Exigé par V3X pour les applications et les jeux : fais analyser le fichier sur virustotal.com et colle le lien du rapport (six au plus, un par ligne).</p>
+          <p class="hint">Exigé par V3X pour les applications et les jeux : fais analyser le fichier sur <a href="https://www.virustotal.com/" target="_blank" rel="noopener">virustotal.com</a> et colle le lien du rapport (vingt au plus, un par ligne).</p>
         </div>
       </div>
 
