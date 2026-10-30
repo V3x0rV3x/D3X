@@ -578,6 +578,9 @@
       <label for="f-pubcat">Catégorie de tes publications</label>
       <input id="f-pubcat" type="text" autocomplete="off" placeholder="la même">
       <p class="hint">Pour ranger à part ce que tu publies avec Publier et le Lot. Vide : la catégorie ci-dessus.</p>
+      <label for="f-hashlimit">Vitesse de lecture des fichiers (Mo/s)</label>
+      <input id="f-hashlimit" type="number" min="0" max="10000" step="1" inputmode="numeric" placeholder="sans limite">
+      <p class="hint">Pour fabriquer le .torrent (Publier, Lot) et vérifier la Médiathèque, sur les fichiers de ce PC. Vide : aussi vite que possible. Si tes fichiers sont sur un NAS par le réseau, la lecture peut prendre tout le débit de ta carte et couper le reste (internet compris) pendant le hachage : 50 laisse plus de la moitié d'un réseau à 1 Gbit/s.</p>
       <label for="f-discogs">Jeton Discogs (facultatif)</label>
       <input id="f-discogs" type="password" autocomplete="off" spellcheck="false">
       <label class="check small hidden" id="f-discogs-clear-l"><input id="f-discogs-clear" type="checkbox"> Retirer le jeton Discogs</label>

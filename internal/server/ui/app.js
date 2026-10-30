@@ -394,6 +394,7 @@ function fillSettings() {
   renderClients();
   $("#f-cat").value = s.category || "";
   $("#f-pubcat").value = s.pubCategory || "";
+  $("#f-hashlimit").value = s.hashLimit ? String(s.hashLimit) : "";
   $("#f-discogs").value = "";
   $("#f-discogs").placeholder = s.discogs ? "Enregistré (laisse vide pour le garder)" : "facultatif";
   $("#f-discogs-clear").checked = false;
@@ -830,6 +831,7 @@ async function saveSettings(ev) {
       clients: edit.clients.map(clientPayload),
       category: $("#f-cat").value,
       pubCategory: $("#f-pubcat").value,
+      hashLimit: Math.max(0, Math.round(Number($("#f-hashlimit").value) || 0)),
       discogsToken: $("#f-discogs").value.trim(),
       discogsClear: $("#f-discogs-clear").checked,
       tag: $("#f-tag").value,

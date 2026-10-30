@@ -46,6 +46,12 @@ type Config struct {
 	// pochette quand MusicBrainz n'en a pas. Jamais renvoyé à la page.
 	DiscogsToken string `json:"discogsToken,omitempty"`
 
+	// HashLimitMB : vitesse de lecture des fichiers de ce PC en Mo/s, pour
+	// fabriquer un .torrent (Publier, Lot) ou vérifier la Médiathèque ; 0 =
+	// sans limite. Utile quand les fichiers sont sur un NAS joint par le
+	// réseau (Mamaiii, 30/10/26).
+	HashLimitMB int `json:"hashLimitMB,omitempty"`
+
 	// Vérifier au lancement qu'une nouvelle version existe (GitHub).
 	CheckUpdates bool `json:"checkUpdates"`
 

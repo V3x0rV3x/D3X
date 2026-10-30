@@ -356,6 +356,13 @@ func (p *Plan) hashPieces(ctx context.Context, progress Progress) ([]byte, error
 				if left := f.Size - read; left < want {
 					want = left
 				}
+				if limited() && want > limitChunk {
+					want = limitChunk
+				}
+				if err := throttle(ctx, int(want)); err != nil {
+					fh.Close()
+					return err
+				}
 				n, err := io.ReadFull(fh, buf[fill:fill+int(want)])
 				read += int64(n)
 				fill += n

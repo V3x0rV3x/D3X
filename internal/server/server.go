@@ -37,6 +37,7 @@ import (
 	"github.com/V3x0rV3x/D3X/internal/crossseed"
 	"github.com/V3x0rV3x/D3X/internal/desktop"
 	"github.com/V3x0rV3x/D3X/internal/journal"
+	"github.com/V3x0rV3x/D3X/internal/maketorrent"
 	"github.com/V3x0rV3x/D3X/internal/mediainfo"
 	"github.com/V3x0rV3x/D3X/internal/musicbrainz"
 	"github.com/V3x0rV3x/D3X/internal/pathmap"
@@ -137,6 +138,7 @@ func New(version string, cfg *config.Config, token string, port int) *Server {
 // NewWith prépare le serveur avec des options.
 func NewWith(version string, cfg *config.Config, token string, port int, opts Options) *Server {
 	s := &Server{Version: version, Token: token, Port: port, opts: opts, cfg: cfg, mux: http.NewServeMux(), restart: make(chan struct{}), restartOnce: &sync.Once{}, boot: NewToken()[:16]}
+	maketorrent.SetReadLimit(cfg.HashLimitMB)
 	s.engine = crossseed.New(s.env)
 	s.engine.SetRefresh(s.retryClients)
 	s.mb = musicbrainz.New(version)
@@ -376,7 +378,8 @@ type stateOut struct {
 	Clients      []clientOut `json:"clients"`
 	Category     string      `json:"category"`
 	PubCategory  string      `json:"pubCategory"`
-	Discogs      bool        `json:"discogs"` // jeton Discogs enregistré
+	HashLimit    int         `json:"hashLimit"` // Mo/s, 0 = sans limite
+	Discogs      bool        `json:"discogs"`   // jeton Discogs enregistré
 	Tag          string      `json:"tag"`
 	CheckUpdates bool        `json:"checkUpdates"`
 	LastDir      string      `json:"lastDir,omitempty"`
@@ -428,6 +431,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	o.Clients = s.clientsOut()
 	o.Category, o.Tag, o.CheckUpdates = s.cfg.Category, s.cfg.Tag, s.cfg.CheckUpdates
 	o.PubCategory = s.cfg.PubCategory
+	o.HashLimit = s.cfg.HashLimitMB
 	o.Discogs = s.cfg.DiscogsToken != ""
 	o.LastDir = s.cfg.LastDir
 	o.Watch = s.surveyState(s.cfg.Watch)
@@ -476,6 +480,8 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 		V3XKey      string `json:"v3xKey"`
 		Category    string `json:"category"`
 		PubCategory string `json:"pubCategory"`
+		// HashLimit : Mo/s ; absent = inchangé.
+		HashLimit *int `json:"hashLimit"`
 		// DiscogsToken : vide = inchangé ; DiscogsClear le retire.
 		DiscogsToken string `json:"discogsToken"`
 		DiscogsClear bool   `json:"discogsClear"`
@@ -525,6 +531,9 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 	}
 	c.Category = strings.TrimSpace(in.Category)
 	c.PubCategory = strings.TrimSpace(in.PubCategory)
+	if in.HashLimit != nil {
+		c.HashLimitMB = min(max(*in.HashLimit, 0), 10000)
+	}
 	if t := strings.TrimSpace(in.DiscogsToken); t != "" {
 		c.DiscogsToken = t
 	} else if in.DiscogsClear {
@@ -559,6 +568,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 	}
 	s.cfg = &c
 	s.mu.Unlock()
+	maketorrent.SetReadLimit(c.HashLimitMB)
 	if err := config.Save(&c); err != nil {
 		fail(w, http.StatusInternalServerError, errors.New("réglages non enregistrés : "+withPermHint(err).Error()))
 		return

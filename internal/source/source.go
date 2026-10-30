@@ -70,13 +70,13 @@ func (Local) Hash(ctx context.Context, p *maketorrent.Plan, _ []string, by strin
 func (Local) Audio(_ context.Context, p *maketorrent.Plan, _ []string) (*audio.Album, error) {
 	return audio.FromPlan(p), nil
 }
-func (Local) ReadAt(_ context.Context, p string, off, n int64) ([]byte, error) {
+func (Local) ReadAt(ctx context.Context, p string, off, n int64) ([]byte, error) {
 	f, err := os.Open(p)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	return io.ReadAll(io.NewSectionReader(f, off, n))
+	return io.ReadAll(maketorrent.Paced(ctx, io.NewSectionReader(f, off, n)))
 }
 func (Local) Names(_ context.Context, d string) []string {
 	list, err := os.ReadDir(d)
