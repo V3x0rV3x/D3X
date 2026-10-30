@@ -47,14 +47,24 @@ func certainWork(results []Work, title string, year Text, isSeries bool) *Work {
 
 // ---------- nom d'un album (music.js) ----------
 
+// nameQuality : la qualité déjà écrite juste après le format, même motif que
+// music.js : débit (« 128 », « 245kbps », « V0 », « VBR ») ou, sans perte,
+// profondeur et échantillonnage (« 24bit », « 96kHz », « 16bits 44.1kHz », « 24-96 »).
+const nameQuality = `(?:16|24|32) ?(?:bits?|b)?(?:[ ._/-]+\d{2,3}(?:[.,]\d)? ?(?:khz|k)?)?` +
+	`|\d{2,3}(?:[.,]\d)? ?khz` +
+	`|\d{2,3} ?(?:kbps|kbits?/s|kbits?|kb/s|kb|k)?` +
+	`|v\d(?:[ ._-]?vbr)?|[vca]br`
+
 // nameWithToken : la qualité exigée par V3X dans le nom (« FLAC 24bit-96kHz »).
 // Le format déjà écrit est complété, sinon la qualité est ajoutée à la fin,
-// dans le style du nom (espaces, points ou tirets).
+// dans le style du nom (espaces, points ou tirets). Une qualité déjà écrite
+// après le format est remplacée, pas complétée (« MP3.128 » devenait
+// « MP3.128.128 », Indrop, 30/10/26).
 func nameWithToken(name, token string) string {
 	if token == "" {
 		return name
 	}
-	codec := strings.SplitN(token, " ", 2)[0]
+	codec, quality, _ := strings.Cut(token, " ")
 	if codec == "" {
 		// Le JS insérerait la qualité au hasard d'un séparateur : on l'ajoute à la fin.
 		return name + " [" + token + "]"
@@ -66,19 +76,29 @@ func nameWithToken(name, token string) string {
 	} else if strings.Contains(name, ".") {
 		sep = "."
 	}
-	styled := token
-	if !spaced {
-		styled = strings.ReplaceAll(token, " ", sep)
+	style := func(s string) string {
+		if spaced {
+			return s
+		}
+		return strings.ReplaceAll(s, " ", sep)
 	}
-	re := regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])` + regexp.QuoteMeta(codec) + `([^A-Za-z0-9]|$)`)
+	had := ""
+	if quality != "" {
+		had = `(?:([ ._\-\[\]()]+)(?:` + nameQuality + `))?`
+	}
+	re := regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])` + regexp.QuoteMeta(codec) + had + `([^A-Za-z0-9]|$)`)
 	if loc := re.FindStringSubmatchIndex(name); loc != nil {
-		// Le codec et ce qui le précède sont remplacés ; le reste est gardé.
-		return name[:loc[3]] + styled + name[loc[4]:]
+		// Le format (et sa qualité déjà écrite) est remplacé ; ce qui précède et la suite sont gardés.
+		rest := name[loc[len(loc)-2]:]
+		if quality != "" && loc[4] >= 0 {
+			return name[:loc[3]] + codec + name[loc[4]:loc[5]] + style(quality) + rest
+		}
+		return name[:loc[3]] + style(token) + rest
 	}
 	if spaced {
 		return name + " [" + token + "]"
 	}
-	return name + sep + styled
+	return name + sep + style(token)
 }
 
 func mbURL(id string) string { return "https://musicbrainz.org/release/" + id }

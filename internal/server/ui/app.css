@@ -437,6 +437,7 @@ tr.risk-warn td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
 .fs-list li:last-child { border-bottom: 0; }
 .fs-list li.skip { opacity: .55; }
 .fs-list li.empty { color: var(--muted); }
+.fs-list li.fs-back { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
 .fs-ico { width: 18px; height: 14px; flex: none; border-radius: 3px; background: var(--sunk); border: 1px solid var(--line); }
 .fs-ico.dir { background: var(--accent-soft); border-color: var(--accent); }
 .fs-name { flex: 1; min-width: 0; text-align: left; border: 0; background: none; color: var(--ink); font: 14px var(--sans); cursor: pointer; padding: 2px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

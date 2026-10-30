@@ -6,6 +6,8 @@ package pathmap
 import (
 	"os"
 	"strings"
+
+	"github.com/V3x0rV3x/D3X/internal/names"
 )
 
 // Rule : le dossier From (côté D3X) est le dossier To (côté client).
@@ -98,17 +100,18 @@ func Suggest(localDir string, clientPaths []string) (Rule, int) {
 }
 
 // SuggestNames fait comme Suggest, avec les noms du dossier déjà lus (dossier
-// d'une seedbox, lu par l'agent).
+// d'une seedbox, lu par l'agent). Sur un Mac, les noms du dossier (accents
+// décomposés) et ceux du client (souvent composés) se comparent recomposés.
 func SuggestNames(localDir string, entryNames []string, clientPaths []string) (Rule, int) {
-	names := map[string]bool{}
+	here := map[string]bool{}
 	for _, n := range entryNames {
-		names[n] = true
+		here[names.FromDisk(n)] = true
 	}
 	votes := map[string]int{}
 	for _, cp := range clientPaths {
 		n := norm(cp)
 		i := strings.LastIndex(n, "/")
-		if i <= 0 || !names[n[i+1:]] {
+		if i <= 0 || !here[names.FromDisk(n[i+1:])] {
 			continue
 		}
 		parent := cp[:len(strings.TrimRight(cp, `/\`))-len(n[i+1:])]
@@ -128,7 +131,7 @@ func SuggestNames(localDir string, entryNames []string, clientPaths []string) (R
 		return Rule{}, 0
 	}
 	// Déjà le même chemin des deux côtés : aucune règle nécessaire.
-	if strings.EqualFold(norm(best), norm(localDir)) {
+	if strings.EqualFold(names.FromDisk(norm(best)), names.FromDisk(norm(localDir))) {
 		return Rule{}, votes[best]
 	}
 	return Rule{From: localDir, To: best}, votes[best]

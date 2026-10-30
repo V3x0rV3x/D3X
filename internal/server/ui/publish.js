@@ -312,7 +312,9 @@ function needsVirusTotal() {
 
 // ---------- sélecteur de dossiers ----------
 
-async function browse(path) {
+// from : le chemin d'où l'on vient (dossier quitté par « Remonter », release
+// refermée), gardé en vue s'il est dans la liste.
+async function browse(path, from) {
   try {
     const r = await api("/ui/fs?source=" + pub.source + "&path=" + encodeURIComponent(path || ""));
     pub.dir = r.path;
@@ -321,6 +323,7 @@ async function browse(path) {
     $("#fs-up").dataset.parent = r.parent || "";
     const ul = $("#fs-list");
     ul.replaceChildren();
+    let back = null;
     if (!r.entries.length) ul.append(el("li", "empty", "Dossier vide."));
     for (const e of r.entries) {
       const li = el("li", e.skip ? "skip" : "");
@@ -339,7 +342,17 @@ async function browse(path) {
       } else if (e.skip) {
         li.append(el("span", "muted small", "écarté"));
       }
+      if (from && e.path === from) back = li;
       ul.append(li);
+    }
+    // Un dossier ouvert part du haut ; en remontant, la liste se place sur le
+    // dossier d'où l'on sort, marqué, au lieu de repartir du haut (Hypsis,
+    // 30/10/26 : avec des milliers de dossiers, il fallait le rechercher).
+    ul.scrollTop = 0;
+    if (back) {
+      back.classList.add("fs-back");
+      const y = back.getBoundingClientRect().top - ul.getBoundingClientRect().top - ul.clientTop;
+      ul.scrollTop = y - (ul.clientHeight - back.offsetHeight) / 2;
     }
   } catch (e) {
     if (e.message !== "session") toast(e.message, "bad");
@@ -497,6 +510,7 @@ function resetForm() {
 }
 
 async function cancelJob() {
+  const from = pub.job && pub.job.path;
   if (pub.job && !pub.job.published) {
     try { await api("/ui/pub/" + pub.job.id + "/cancel", {}); } catch (e) { /* rien */ }
   }
@@ -508,7 +522,7 @@ async function cancelJob() {
   $("#pub-done").classList.add("hidden");
   $("#pub-bar").classList.add("hidden");
   window.pubSources();
-  browse(pub.dir);
+  browse(pub.dir, from);
 }
 
 async function pollJob() {
@@ -1623,9 +1637,9 @@ window.pubShow = async (on) => {
 
 function bindPublish() {
   buildToolbar();
-  $("#fs-up").addEventListener("click", () => browse($("#fs-up").dataset.parent || ""));
-  $("#fs-go").addEventListener("click", () => browse($("#fs-path").value));
-  $("#fs-path").addEventListener("keydown", (e) => { if (e.key === "Enter") browse($("#fs-path").value); });
+  $("#fs-up").addEventListener("click", () => browse($("#fs-up").dataset.parent || "", pub.dir));
+  $("#fs-go").addEventListener("click", () => browse($("#fs-path").value, pub.dir));
+  $("#fs-path").addEventListener("keydown", (e) => { if (e.key === "Enter") browse($("#fs-path").value, pub.dir); });
   $("#job-cancel").addEventListener("click", cancelJob);
   $("#versions-ignore").addEventListener("click", ignoreRelease);
   $("#map-save").addEventListener("click", saveMap);

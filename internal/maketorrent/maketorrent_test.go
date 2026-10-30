@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/V3x0rV3x/D3X/internal/bencode"
@@ -116,6 +117,35 @@ func TestSingleFile(t *testing.T) {
 	parsed, _ := torrent.Parse(raw)
 	if parsed.ContentHash != p.ContentHash || parsed.Total != 1_000_000 {
 		t.Fatal("mono-fichier : empreinte ou taille fausse")
+	}
+}
+
+// Noms à accents décomposés (NFD, comme macOS les rend) : recomposés dans le
+// .torrent sur un Mac seulement, gardés octet pour octet ailleurs ; le
+// hachage lit toujours le fichier sous son nom du disque.
+func TestAccentNames(t *testing.T) {
+	setEnv(t)
+	nfdDir, nfdFile := "Amélie.2001", "Crédits.mkv"
+	dir := filepath.Join(t.TempDir(), nfdDir)
+	write(t, filepath.Join(dir, nfdFile), 100_000, 9)
+	p, err := Scan(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantDir, wantFile := nfdDir, nfdFile
+	if runtime.GOOS == "darwin" {
+		wantDir, wantFile = "Amélie.2001", "Crédits.mkv"
+	}
+	if p.Name != wantDir || len(p.Files) != 1 || p.Files[0].Rel != wantFile {
+		t.Fatalf("noms : %q %+v", p.Name, p.Files)
+	}
+	raw, _, err := p.Hash(context.Background(), "t", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, _ := torrent.Parse(raw)
+	if parsed.Name != wantDir || parsed.ContentHash != p.ContentHash {
+		t.Fatalf(".torrent : %q", parsed.Name)
 	}
 }
 

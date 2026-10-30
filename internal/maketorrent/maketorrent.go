@@ -26,6 +26,7 @@ import (
 
 	"github.com/V3x0rV3x/D3X/internal/bencode"
 	"github.com/V3x0rV3x/D3X/internal/config"
+	"github.com/V3x0rV3x/D3X/internal/names"
 	"github.com/V3x0rV3x/D3X/internal/torrent"
 )
 
@@ -39,8 +40,8 @@ const Source = "V3X"
 
 // Entry est un fichier de la release.
 type Entry struct {
-	Rel     string // chemin dans la release, séparateur « / » (mono-fichier : le nom)
-	Abs     string
+	Rel     string // chemin dans la release, séparateur « / » (mono-fichier : le nom), recomposé sur un Mac
+	Abs     string // chemin sur le disque, tel quel
 	Size    int64
 	ModTime time.Time
 }
@@ -68,7 +69,9 @@ func Scan(root string, exclude []string) (*Plan, error) {
 	if err != nil {
 		return nil, err
 	}
-	p := &Plan{Root: abs, Name: filepath.Base(abs)}
+	// Nom de la release et chemins du .torrent : recomposés sur un Mac, pour que
+	// le client qui seede sur Windows ou Linux retrouve les fichiers à accents.
+	p := &Plan{Root: abs, Name: names.FromDisk(filepath.Base(abs))}
 	if !st.IsDir() {
 		if !st.Mode().IsRegular() {
 			return nil, errors.New("ce n'est ni un fichier ni un dossier")
@@ -146,9 +149,9 @@ func (p *Plan) walk(dir, rel string, seen map[string]bool, exclude []string) err
 	}
 	for _, e := range entries {
 		name := e.Name()
-		r := name
+		r := names.FromDisk(name)
 		if rel != "" {
-			r = rel + "/" + name
+			r = rel + "/" + r
 		}
 		if Excluded(name, exclude) {
 			p.Skipped = append(p.Skipped, r)

@@ -34,9 +34,28 @@ func TestNameWithToken(t *testing.T) {
 		{"Artiste.Album.2020", "MP3 320", "Artiste.Album.2020.MP3.320"},
 		{"Artiste-Album-2020-FLAC", "FLAC 16bit-44.1kHz", "Artiste-Album-2020-FLAC-16bit-44.1kHz"},
 		{"Artiste - Album", "", "Artiste - Album"},
+		// Qualité déjà écrite : remplacée, jamais doublée (Indrop, 30/10/26).
+		{"Artiste.Album.2019.MP3.128", "MP3 128", "Artiste.Album.2019.MP3.128"},
+		{"Artiste.Album.2019.AAC.290", "AAC 290", "Artiste.Album.2019.AAC.290"},
+		{"artiste.album.mp3.128", "MP3 128", "artiste.album.MP3.128"},
+		{"Artiste - Album [MP3 128kbps]", "MP3 128", "Artiste - Album [MP3 128]"},
+		{"Artiste - Album [MP3 128 kb/s]", "MP3 128", "Artiste - Album [MP3 128]"},
+		{"Artiste - Album MP3 V1", "MP3 VBR", "Artiste - Album MP3 VBR"},
+		{"Artiste - Album (FLAC 24bit)", "FLAC 24bit-96kHz", "Artiste - Album (FLAC 24bit-96kHz)"},
+		{"Artiste - Album [FLAC] [96kHz]", "FLAC 24bit-96kHz", "Artiste - Album [FLAC] [24bit-96kHz]"},
+		{"Artiste - Album FLAC 16bits 44kHz", "FLAC 16bit-44.1kHz", "Artiste - Album FLAC 16bit-44.1kHz"},
+		{"Artiste.Album.FLAC.24-96.WEB", "FLAC 24bit-96kHz", "Artiste.Album.FLAC.24bit-96kHz.WEB"},
+		// Une année n'est pas un débit.
+		{"Artiste.Album.MP3.2019", "MP3 320", "Artiste.Album.MP3.320.2019"},
+		{"Artiste - Album [DSD]", "DSD128", "Artiste - Album [DSD] [DSD128]"},
 	} {
-		if got := nameWithToken(c.name, c.token); got != c.want {
+		got := nameWithToken(c.name, c.token)
+		if got != c.want {
 			t.Errorf("nameWithToken(%q, %q) = %q, attendu %q", c.name, c.token, got, c.want)
+		}
+		// Deuxième passage : rien ne change (le bouton de Publier ne revient pas).
+		if again := nameWithToken(got, c.token); again != got {
+			t.Errorf("nameWithToken(%q, %q) deux fois = %q", got, c.token, again)
 		}
 	}
 }

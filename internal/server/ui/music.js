@@ -40,18 +40,34 @@ function musicCategory() {
   return null;
 }
 
+// Qualité déjà écrite juste après le format : débit (« 128 », « 245kbps »,
+// « V0 », « VBR ») ou, sans perte, profondeur et échantillonnage (« 24bit »,
+// « 96kHz », « 16bits 44.1kHz », « 24-96 »). Même motif que batch/text.go.
+const NAME_QUALITY =
+  "(?:16|24|32) ?(?:bits?|b)?(?:[ ._/-]+\\d{2,3}(?:[.,]\\d)? ?(?:khz|k)?)?" +
+  "|\\d{2,3}(?:[.,]\\d)? ?khz" +
+  "|\\d{2,3} ?(?:kbps|kbits?/s|kbits?|kb/s|kb|k)?" +
+  "|v\\d(?:[ ._-]?vbr)?|[vca]br";
+
 // Nom de release avec la qualité exigée par V3X (« FLAC 24bit-96kHz ») : le
 // format déjà écrit est complété, sinon la qualité est ajoutée à la fin, dans
-// le style du nom (espaces, points ou tirets).
+// le style du nom (espaces, points ou tirets). Une qualité déjà écrite après
+// le format est remplacée, pas complétée : « MP3.128 » devenait
+// « MP3.128.128 » et le bouton revenait à chaque clic (Indrop, 30/10/26).
 function nameWithToken(name, token) {
   if (!token) return name;
-  const codec = token.split(" ")[0];
+  const [codec, ...rest] = token.split(" ");
+  const quality = rest.join(" ");
   const spaced = /\s/.test(name);
   const sep = spaced ? " " : name.includes(".") ? "." : "-";
-  const styled = spaced ? token : token.replace(/ /g, sep);
-  const re = new RegExp("(^|[^A-Za-z0-9])" + codec + "(?![A-Za-z0-9])", "i");
-  if (re.test(name)) return name.replace(re, (m, pre) => pre + styled);
-  return spaced ? name + " [" + token + "]" : name + sep + styled;
+  const style = (s) => (spaced ? s : s.replace(/ /g, sep));
+  const had = quality ? "(?:([ ._\\-\\[\\]()]+)(?:" + NAME_QUALITY + "))?" : "";
+  const m = new RegExp("(^|[^A-Za-z0-9])" + codec + had + "(?![A-Za-z0-9])", "i").exec(name);
+  if (m) {
+    const put = m[2] ? codec + m[2] + style(quality) : style(token);
+    return name.slice(0, m.index) + m[1] + put + name.slice(m.index + m[0].length);
+  }
+  return spaced ? name + " [" + token + "]" : name + sep + style(token);
 }
 
 function albumSummary(a) {
