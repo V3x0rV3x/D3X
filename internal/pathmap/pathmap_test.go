@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	unorm "golang.org/x/text/unicode/norm"
 )
 
 func TestToClient(t *testing.T) {
@@ -26,6 +28,22 @@ func TestToClient(t *testing.T) {
 	}
 	if got := ToClient("/srv/x", []Rule{{From: "/srv", To: `D:\srv`}}); got != `D:\srv\x` {
 		t.Errorf("vers Windows : %q", got)
+	}
+}
+
+// Sur un Mac, la partie du chemin lue sur le disque (accents décomposés) part
+// au client recomposée ; le chemin sans règle reste tel quel.
+func TestToClientAccentsMac(t *testing.T) {
+	old := clientName
+	clientName = unorm.NFC.String
+	defer func() { clientName = old }()
+	nfd := "/Volumes/D/Vide\u0301os/Ame\u0301lie"
+	rules := []Rule{{From: "/Volumes/D", To: `D:\`}}
+	if got := ToClient(nfd, rules); got != "D:\\Vid\u00e9os\\Am\u00e9lie" {
+		t.Errorf("ToClient = %q", got)
+	}
+	if got := ToClient(nfd, nil); got != nfd {
+		t.Errorf("sans règle : %q", got)
 	}
 }
 

@@ -50,6 +50,12 @@ func prefix(p, from, to string) (string, bool) {
 // long ; sans règle, le chemin est rendu tel quel).
 func ToClient(p string, rules []Rule) string { return apply(p, rules, true) }
 
+// clientName écrit un chemin traduit comme le client le voit : sur un Mac, la
+// partie lue sur le disque a ses accents décomposés, le PC ou le NAS du client
+// a les mêmes dossiers en accents composés, comme les noms du .torrent (voir
+// names.FromDisk ; « Vidéos » dans le chemin, ilfaitchaud 30/10/26).
+var clientName = names.FromDisk
+
 // Covers dit si une règle traduit p (son dossier D3X est p ou le contient).
 func Covers(p string, rules []Rule) bool {
 	for _, r := range rules {
@@ -77,6 +83,9 @@ func apply(p string, rules []Rule, toClient bool) string {
 			continue
 		}
 		if m, ok := prefix(p, from, to); ok {
+			if toClient {
+				m = clientName(m)
+			}
 			out, best = m, len(norm(from))
 		}
 	}
