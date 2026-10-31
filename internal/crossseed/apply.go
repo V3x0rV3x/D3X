@@ -12,6 +12,7 @@ import (
 	"github.com/V3x0rV3x/D3X/internal/client"
 	"github.com/V3x0rV3x/D3X/internal/config"
 	"github.com/V3x0rV3x/D3X/internal/journal"
+	"github.com/V3x0rV3x/D3X/internal/links"
 	"github.com/V3x0rV3x/D3X/internal/torrent"
 	"github.com/V3x0rV3x/D3X/internal/v3x"
 )
@@ -669,6 +670,96 @@ func (e *Engine) AddAndVerify(ctx context.Context, tg Target, cfg *config.Config
 	return hash, nil
 }
 
+// AddLinked range la release dans le dossier de liens du client tg : chaque
+// fichier du .torrent y devient un lien vers le même chemin sous srcDir (le
+// dossier d'origine, vu par le client), puis le torrent est ajouté à l'arrêt
+// sur le dossier de liens, vérifié et suivi, comme AddAndVerify. Pour les
+// publications (Réglages ▸ Liens ▸ « Mes publications aussi »). Tant que rien
+// n'est entré dans le client, une impossibilité est un *LinkError et rien
+// n'est resté sur le disque : l'appelant peut se replier sur les fichiers
+// d'origine. ErrInClient garde son sens (liens retirés).
+func (e *Engine) AddLinked(ctx context.Context, tg Target, cfg *config.Config, key, id string, raw []byte, srcDir string) (string, error) {
+	reason := "pas de dossier de liens pour ce client (Réglages ▸ Liens)"
+	if cfg == nil || !cfg.Links.On || !cfg.Links.Publish {
+		reason = "les liens pour les publications sont éteints (Réglages ▸ Liens)"
+	}
+	// Le serveur installe toujours un créateur de liens : sans lui, c'est
+	// forcément le réglage éteint ou l'absence de dossier de liens.
+	link := e.publishLinker(cfg, tg)
+	if link == nil {
+		return "", &LinkError{Reason: reason}
+	}
+	t, err := torrent.Parse(raw)
+	if err != nil {
+		return "", &LinkError{Reason: "le .torrent reçu de V3X est illisible", Err: err}
+	}
+	dir := strings.TrimSpace(tg.LinksDir)
+	srcDir = strings.TrimSpace(srcDir)
+	// Sans la liste du client, on ne pose rien à l'aveugle : l'appelant se
+	// replie sur l'origine.
+	all, err := tg.Client.List(ctx, nil)
+	if err != nil {
+		return "", &LinkError{Reason: "liste du client illisible : " + err.Error(), Err: err}
+	}
+	if occupied(all, clientJoin(dir, t.Name)) {
+		return "", &LinkError{Reason: "« " + t.Name + " » est déjà l'emplacement d'un torrent dans ton dossier de liens"}
+	}
+	lp := make([]links.Pair, 0, len(t.Files))
+	for _, f := range t.Files {
+		lp = append(lp, links.Pair{Src: clientJoin(srcDir, f.Path), Dst: clientJoin(dir, f.Path), Size: f.Size})
+	}
+	return e.linkAndAdd(ctx, tg, cfg, link, dir, lp, key, id, raw)
+}
+
+// occupied dit si un torrent du client occupe déjà l'emplacement target du
+// dossier de liens (son contenu est dessous ou au-dessus). Un chemin vide
+// (client qui ne le donne pas) ne compte pas : il serait « au-dessus » de
+// tout et refuserait n'importe quel ajout.
+func occupied(all []client.Torrent, target string) bool {
+	for _, x := range all {
+		if strings.TrimSpace(x.ContentPath) == "" {
+			continue
+		}
+		if under(x.ContentPath, target) || under(target, x.ContentPath) {
+			return true
+		}
+	}
+	return false
+}
+
+// linkAndAdd pose les liens lp dans dir, puis ajoute le torrent à l'arrêt sur
+// dir, le vérifie et le suit (AddAndVerify). Tant que rien n'est entré dans
+// le client, l'échec est un *LinkError et les liens sont retirés ; ils le
+// sont aussi pour ErrInClient. Réussi, l'ajout retient ses liens (Remove les
+// enlèvera).
+func (e *Engine) linkAndAdd(ctx context.Context, tg Target, cfg *config.Config, link Linker, dir string, lp []links.Pair, key, id string, raw []byte) (string, error) {
+	if err := link(ctx, tg.PathMap, dir, lp, false); err != nil {
+		return "", &LinkError{Reason: "liens : " + err.Error(), Err: err}
+	}
+	hash, err := e.AddAndVerify(ctx, tg, cfg, key, id, raw, dir)
+	if err != nil {
+		if hash == "" || errors.Is(err, ErrInClient) {
+			_ = link(context.Background(), tg.PathMap, dir, lp, true)
+		}
+		if hash == "" {
+			return "", &LinkError{Reason: err.Error(), Err: err}
+		}
+		return hash, err
+	}
+	e.setLinks(hash, dir, lp)
+	return hash, nil
+}
+
+// setLinks retient les liens posés pour un ajout suivi (Remove les enlève).
+func (e *Engine) setLinks(hash, dir string, pairs []links.Pair) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if w := e.watches[strings.ToLower(hash)]; w != nil {
+		w.LinksDir, w.Links = dir, pairs
+		e.saveWatchesLocked()
+	}
+}
+
 // ErrInClient : ce torrent est déjà dans le client.
 var ErrInClient = errors.New("ce torrent est déjà dans le client")
 
@@ -705,9 +796,36 @@ func (e *Engine) Remove(key string) error {
 			return err
 		}
 	}
+	// Les liens posés pour cet ajout partent avec lui ; l'original reste
+	// (links.Remove n'efface qu'un fichier qui est la même donnée que sa
+	// source). Le créateur de liens est pris tel quel : le réglage a pu être
+	// éteint depuis, les liens existent quand même.
+	e.mu.Lock()
+	var ldir string
+	var lp []links.Pair
+	if w := e.watches[hash]; w != nil {
+		ldir, lp = w.LinksDir, w.Links
+	}
+	link := e.linker
+	e.mu.Unlock()
+	detail := "retiré du client, fichiers intacts"
+	if len(lp) > 0 {
+		detail = "retiré du client, liens retirés, fichiers intacts"
+		left := "retiré du client, fichiers intacts ; liens laissés dans « " + ldir + " »"
+		if link == nil {
+			detail = left
+		} else {
+			// Son propre délai : le retrait du client a pu consommer celui de ctx.
+			lctx, lcancel := context.WithTimeout(context.Background(), 30*time.Second)
+			if lerr := link(lctx, t.PathMap, ldir, lp, true); lerr != nil {
+				detail = left + " : " + lerr.Error()
+			}
+			lcancel()
+		}
+	}
 	e.mu.Lock()
 	if w := e.watches[hash]; w != nil {
-		w.Status, w.Detail = StRemoved, "retiré du client, fichiers intacts"
+		w.Status, w.Detail = StRemoved, detail
 		journal.Add(journal.Event{Kind: "removed", Name: w.Name, InfoHash: hash, ID: w.ID, Detail: w.Detail})
 	}
 	e.mu.Unlock()

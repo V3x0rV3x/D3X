@@ -90,6 +90,17 @@ type Job struct {
 	// mise en seed avec ces fichiers (SeedExisting).
 	SeedOnly bool   `json:"seedOnly,omitempty"`
 	SeedNote string `json:"seedNote,omitempty"` // « déjà dans ton client »
+	// Seed par liens (Réglages ▸ Liens ▸ « Mes publications aussi ») : la
+	// release est rangée dans le dossier de liens du client, ses fichiers
+	// étant des liens vers l'original, comme pour les autres trackers.
+	// LinksDir : ce dossier, vu par le client (vide : il n'en a pas, Links
+	// reste faux). Le membre peut changer Links jusqu'à l'envoi.
+	Links    bool   `json:"links"`
+	LinksDir string `json:"linksDir,omitempty"`
+	// Après l'ajout au client : « links » ou « origin », et la raison du
+	// repli sur les fichiers d'origine quand les liens étaient demandés.
+	SeedVia   string `json:"seedVia,omitempty"`
+	LinksNote string `json:"linksNote,omitempty"`
 
 	// Source des fichiers (ce PC ou la seedbox) et son nom pour la page.
 	Source string `json:"source"`
@@ -265,7 +276,7 @@ func (m *Manager) Start(src source.Source, where string) (*Job, error) {
 	}
 
 	// Le client qui seedera, et où il voit le dossier parent.
-	j.setPlace(pick(ctx, env, src, src.Dir(plan.Root)))
+	j.setPlace(pick(ctx, env, src, src.Dir(plan.Root)), cfg)
 
 	// L'annulation existe avant le hachage : posée dans la goroutine, elle
 	// manquait à un Cancel arrivé juste après Start (le Lot annule tout de
@@ -405,7 +416,7 @@ func (m *Manager) SetClientDir(id, dir string) (*pathmap.Rule, string, error) {
 	if j == nil {
 		return nil, "", errors.New("publication inconnue")
 	}
-	if j.Published != nil || j.State == StPublishing {
+	if j.Published != nil || j.State == StPublishing || j.State == StSeeding || j.State == StDone {
 		return nil, "", errors.New("release déjà envoyée : son dossier ne change plus")
 	}
 	j.ClientDir = strings.TrimSpace(dir)
@@ -426,7 +437,7 @@ func (m *Manager) SetClient(id, clientID string) error {
 		m.mu.Unlock()
 		return errors.New("publication inconnue")
 	}
-	if j.Published != nil || j.State == StPublishing {
+	if j.Published != nil || j.State == StPublishing || j.State == StSeeding || j.State == StDone {
 		m.mu.Unlock()
 		return errors.New("release déjà envoyée : elle reste dans son client")
 	}
@@ -448,9 +459,62 @@ func (m *Manager) SetClient(id, clientID string) error {
 	}
 	pl := place(*t, list, parent, src.Names(ctx, parent))
 	m.mu.Lock()
-	j.setPlace(pl)
+	j.setPlace(pl, env.Cfg)
 	m.mu.Unlock()
 	return nil
+}
+
+// SetLinks : la release partira par liens (on) ou sur ses fichiers d'origine,
+// au choix du membre jusqu'à l'envoi.
+func (m *Manager) SetLinks(id string, on bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	j := m.jobs[id]
+	if j == nil {
+		return errors.New("publication inconnue")
+	}
+	if j.Published != nil || j.State == StPublishing || j.State == StSeeding || j.State == StDone {
+		return errors.New("release déjà envoyée : son rangement ne change plus")
+	}
+	if on && j.LinksDir == "" {
+		return errors.New("ce client n'a pas de dossier de liens (Réglages ▸ Liens)")
+	}
+	j.Links = on
+	return nil
+}
+
+// seed ajoute le .torrent au client : par liens si la tâche le demande, sinon
+// sur les fichiers d'origine. Liens impossibles (rien n'est entré dans le
+// client) : repli sur l'origine, raison gardée dans LinksNote. Renvoie
+// l'erreur de l'ajout retenu, ErrInClient comprise.
+func (m *Manager) seed(ctx context.Context, j *Job, t crossseed.Target, cfg *config.Config, key, id string, raw []byte) error {
+	m.mu.Lock()
+	viaLinks, clientDir := j.Links, j.ClientDir
+	m.mu.Unlock()
+	note, via := "", "origin"
+	var err error
+	if viaLinks {
+		_, err = m.engine.AddLinked(ctx, t, cfg, key, id, raw, clientDir)
+		var le *crossseed.LinkError
+		if errors.As(err, &le) {
+			note = "liens impossibles : " + le.Reason
+		} else {
+			via = "links"
+		}
+		if errors.Is(err, crossseed.ErrInClient) {
+			via = "" // elle est là où elle était déjà, les liens sont retirés
+		}
+	}
+	if via == "origin" {
+		_, err = m.engine.AddAndVerify(ctx, t, cfg, key, id, raw, clientDir)
+	}
+	m.mu.Lock()
+	j.SeedVia, j.LinksNote = via, note
+	if note != "" {
+		j.Links = false
+	}
+	m.mu.Unlock()
+	return err
 }
 
 // placement : un client et où il voit le dossier d'une release.
@@ -461,8 +525,12 @@ type placement struct {
 	votes int
 }
 
-func (j *Job) setPlace(p placement) {
+// setPlace pose le client, le dossier qu'il voit, et le seed par liens : le
+// réglage, si ce client a un dossier de liens.
+func (j *Job) setPlace(p placement, cfg *config.Config) {
 	j.Client, j.ClientName, j.ClientDir, j.MapGuess, j.MapVotes = p.t.ID, p.t.Name, p.dir, p.guess, p.votes
+	j.LinksDir = strings.TrimSpace(p.t.LinksDir)
+	j.Links = cfg != nil && cfg.Links.On && cfg.Links.Publish && j.LinksDir != ""
 }
 
 // place : où le client t voit le dossier parent. Règle enregistrée, sinon
@@ -582,19 +650,18 @@ func (m *Manager) Publish(id string, fields map[string]string) error {
 		if up.InfoHash != "" {
 			j.InfoHash = strings.ToLower(up.InfoHash)
 		}
-		clientDir := j.ClientDir
 		m.mu.Unlock()
 		journal.Add(journal.Event{Kind: "published", Name: name, InfoHash: up.InfoHash, ID: up.ID, Detail: statusLabel(up.Status), Path: j.src.Key(j.Path)})
 
-		// Seed : le .torrent du site (avec ta passkey), sur les fichiers
-		// d'origine, dans le client choisi.
+		// Seed : le .torrent du site (avec ta passkey), dans le client
+		// choisi, sur les fichiers d'origine ou par liens.
 		seedErr := ""
 		torrentRaw, err := env.V3X.OwnTorrent(ctx, up.ID)
 		if err == nil {
 			if t := env.Get(clientID); t == nil {
 				err = env.Unreachable(clientID)
 			} else {
-				_, err = m.engine.AddAndVerify(ctx, *t, pubConfig(env.Cfg), "pub:"+id, up.ID, torrentRaw, clientDir)
+				err = m.seed(ctx, j, *t, pubConfig(env.Cfg), "pub:"+id, up.ID, torrentRaw)
 			}
 			if errors.Is(err, crossseed.ErrInClient) {
 				err = nil
@@ -636,14 +703,14 @@ func (m *Manager) SeedExisting(id string) error {
 	if j.cancel != nil {
 		j.cancel() // le hachage ne sert plus : le .torrent vient de V3X
 	}
-	clientID, clientDir, contentHash := j.Client, j.ClientDir, j.plan.ContentHash
+	clientID, contentHash := j.Client, j.plan.ContentHash
 	m.mu.Unlock()
 
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 		seedErr := ""
-		note, err := m.seedExisting(ctx, id, d, clientID, clientDir, contentHash)
+		note, err := m.seedExisting(ctx, j, d, clientID, contentHash)
 		if err != nil {
 			seedErr = err.Error()
 		}
@@ -655,7 +722,7 @@ func (m *Manager) SeedExisting(id string) error {
 }
 
 // seedExisting rend une note quand il n'y a rien à suivre (déjà dans le client).
-func (m *Manager) seedExisting(ctx context.Context, id string, d *v3x.Match, clientID, clientDir, contentHash string) (string, error) {
+func (m *Manager) seedExisting(ctx context.Context, j *Job, d *v3x.Match, clientID, contentHash string) (string, error) {
 	env, err := m.clients()
 	if err != nil {
 		return "", err
@@ -676,7 +743,7 @@ func (m *Manager) seedExisting(ctx context.Context, id string, d *v3x.Match, cli
 	if tg == nil {
 		return "", env.Unreachable(clientID)
 	}
-	if _, err := m.engine.AddAndVerify(ctx, *tg, env.Cfg, "pub:"+id, d.ID, raw, clientDir); err != nil {
+	if err := m.seed(ctx, j, *tg, env.Cfg, "pub:"+j.ID, d.ID, raw); err != nil {
 		if errors.Is(err, crossseed.ErrInClient) {
 			return "elle est déjà dans ton client", nil
 		}

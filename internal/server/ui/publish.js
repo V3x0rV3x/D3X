@@ -627,6 +627,22 @@ function renderJob() {
   const who = multi ? "« " + j.clientName + " »" : "Ton client";
   if (j.mapGuess) mapText = who + " verra ce dossier comme « " + j.clientDir + " » (déduit de " + j.mapVotes + " torrent" + (j.mapVotes > 1 ? "s" : "") + " de " + (multi ? "ce client" : "ton client") + "). ";
   else mapText = who + " cherchera les fichiers dans « " + j.clientDir + " ». ";
+  // Seed par liens (Réglages ▸ Liens ▸ « Mes publications aussi ») : la case
+  // n'apparaît que si le client a un dossier de liens, jusqu'à l'envoi.
+  const linksRow = $("#pub-links-row");
+  // Même gel que SetLinks côté serveur : ni pendant/après la publication, ni
+  // une fois le seed lancé (« Seeder la release V3X » compris).
+  const linksWanted = !!(ui.state && ui.state.links && ui.state.links.on && ui.state.links.publish);
+  const notSent = !j.published && !j.seedOnly && !["publishing", "seeding", "done"].includes(j.state);
+  const canLink = linksWanted && !!j.linksDir && notSent;
+  linksRow.classList.toggle("hidden", !canLink);
+  if (canLink) {
+    $("#pub-links-dir").textContent = j.linksDir;
+    if (document.activeElement !== $("#pub-links")) $("#pub-links").checked = !!j.links;
+  }
+  if (j.links) mapText += "Rangée dans « " + j.linksDir + " », ses fichiers étant des liens vers ceux-là. ";
+  // Liens voulus mais pas de case : le dire, plutôt que de la cacher sans un mot.
+  else if (linksWanted && !j.linksDir && notSent) mapText += (multi ? "Ce client" : "Ton client") + " n'a pas de dossier de liens (Réglages ▸ Liens) : la release sera seedée sur ses fichiers d'origine. ";
   setStep("#st-map", j.mapGuess || j.mapVotes ? "ok" : "", mapText);
   const fix = el("button", "link", "Corriger");
   fix.type = "button";
@@ -675,6 +691,20 @@ async function pickClient(ev) {
     if (pub.job) sel.value = pub.job.client;
   } finally {
     sel.disabled = false;
+  }
+}
+
+async function toggleLinks(ev) {
+  const box = ev.target;
+  box.disabled = true;
+  try {
+    pub.job = await api("/ui/pub/" + pub.job.id + "/links", { on: box.checked });
+    renderJob();
+  } catch (e) {
+    if (e.message !== "session") toast(e.message, "bad");
+    if (pub.job) box.checked = !!pub.job.links;
+  } finally {
+    box.disabled = false;
   }
 }
 
@@ -1466,7 +1496,7 @@ function askPublish() {
         : ["Œuvre", pub.tmdb ? pub.tmdb.title + (pub.tmdb.year ? " (" + pub.tmdb.year + ")" : "") : "aucune"],
     ["Taille", fmtSize(pub.job.total)],
     ["Visibilité", f.anonymous === "true" ? "anonyme" : "sous ton pseudo"],
-    ["Seed", "ajoutée à " + (multiClients() ? "« " + pub.job.clientName + " »" : "ton client") + " dans « " + pub.job.clientDir + " »"],
+    ["Seed", "ajoutée à " + (multiClients() ? "« " + pub.job.clientName + " »" : "ton client") + (pub.job.links ? " par liens dans « " + pub.job.linksDir + " » (original dans « " + pub.job.clientDir + " »)" : " dans « " + pub.job.clientDir + " »")],
   ];
   for (const [k, v] of rows) dl.append(el("dt", null, k), el("dd", null, v));
   $("#f-rights").checked = false;
@@ -1511,11 +1541,23 @@ function showPubError(msg) {
 // (SeedExisting) : mêmes étapes qu'après une publication.
 function seedText(j, what) {
   if (j.seedError) return "Seed : " + j.seedError + ".";
-  if (j.seedNote) return "Seed : " + j.seedNote + ".";
-  if (j.state === "seeding") return "Seed : ajout de " + what + " à ton client…";
-  if (!j.seed || (j.seed.status === "checking" && !j.seed.detail)) return "Seed : ton client vérifie les fichiers" + (j.seed && j.seed.progress ? " (" + Math.round(j.seed.progress * 100) + " %)" : "") + "…";
-  if (j.seed.status === "seeding") return "Seed : vérifié à 100 %, " + what + " est en seed.";
-  return "Seed : " + (j.seed.detail || j.seed.status);
+  let t;
+  if (j.seedNote) t = "Seed : " + j.seedNote + ".";
+  else if (j.state === "seeding") t = "Seed : ajout de " + what + " à ton client…";
+  else if (!j.seed || (j.seed.status === "checking" && !j.seed.detail)) t = "Seed : ton client vérifie les fichiers" + (j.seed && j.seed.progress ? " (" + Math.round(j.seed.progress * 100) + " %)" : "") + "…";
+  else if (j.seed.status === "seeding") t = "Seed : vérifié à 100 %, " + what + " est en seed.";
+  else t = "Seed : " + (j.seed.detail || j.seed.status);
+  return t + linksOutcome(j);
+}
+
+// Voie du seed, à la suite du texte de seed : repli sur les fichiers d'origine
+// (avec sa raison) ou rangement par liens. Rien quand le seed a échoué, ce
+// serait contradictoire.
+function linksOutcome(j) {
+  if (j.seedError) return "";
+  if (j.linksNote) return " " + j.linksNote.charAt(0).toUpperCase() + j.linksNote.slice(1) + ", seed sur les fichiers d'origine.";
+  if (j.seedVia === "links") return " Rangée par liens dans « " + j.linksDir + " ».";
+  return "";
 }
 
 function renderDone() {
@@ -1534,6 +1576,7 @@ function renderDone() {
   else if (!j.seed || (j.seed.status === "checking" && !j.seed.detail)) seed = "Seed : ton client vérifie les fichiers" + (j.seed && j.seed.progress ? " (" + Math.round(j.seed.progress * 100) + " %)" : "") + "…";
   else if (j.seed.status === "seeding") seed = "Seed : vérifié à 100 %, ta release est en seed.";
   else seed = "Seed : " + (j.seed.detail || j.seed.status);
+  seed += linksOutcome(j);
   const s = el("p", null, seed);
   const again = el("button", "btn", "Publier une autre release");
   again.type = "button";
@@ -1644,6 +1687,7 @@ function bindPublish() {
   $("#versions-ignore").addEventListener("click", ignoreRelease);
   $("#map-save").addEventListener("click", saveMap);
   $("#pub-client").addEventListener("change", pickClient);
+  $("#pub-links").addEventListener("change", toggleLinks);
   $("#tmdb-go").addEventListener("click", searchTmdb);
   $("#tmdb-q").addEventListener("keydown", (e) => { if (e.key === "Enter") searchTmdb(); });
   $("#f-notmdb").addEventListener("change", () => { if ($("#f-notmdb").checked) { pub.tmdb = null; $("#tmdb-picked").classList.add("hidden"); loadFicheSoon(); } renderBar(); });

@@ -87,6 +87,7 @@ type Options struct {
 	WaitCheck bool    `json:"waitCheck"` // attendre la vérification du client avant la suivante
 	SeedLater bool    `json:"seedLater"` // démarrer le seed à la fin du lot
 	KeepNfo   bool    `json:"keepNfo"`   // reprendre le .nfo de la release
+	Links     bool    `json:"links"`     // seeder par liens dans le dossier de liens du client
 	Cap       float64 `json:"cap"`       // Gio par release, 0 : sans plafond
 	Max       float64 `json:"max"`       // publications au plus, 0 : sans limite (2,5 comme la page : arrêt après 3)
 	MaxGiB    float64 `json:"maxGib"`    // Gio publiés par lot, 0 : sans limite
@@ -101,6 +102,8 @@ type Entry struct {
 	Job      string          `json:"job,omitempty"`
 	Active   bool            `json:"active,omitempty"`   // publiée et active (pas en attente de validation)
 	Requests json.RawMessage `json:"requests,omitempty"` // demandes ouvertes auxquelles elle répond
+
+	linksRefused string // option « liens » refusée pour cette publication : la raison, dite sur la ligne
 }
 
 // Run : un lot, en cours ou fini.

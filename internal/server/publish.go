@@ -34,6 +34,7 @@ func (s *Server) routesPublish() {
 	s.mux.HandleFunc("POST /ui/pub/{id}/fiche", s.pubFiche)
 	s.mux.HandleFunc("POST /ui/pub/{id}/clientdir", s.pubClientDir)
 	s.mux.HandleFunc("POST /ui/pub/{id}/client", s.pubClient)
+	s.mux.HandleFunc("POST /ui/pub/{id}/links", s.pubLinks)
 	s.mux.HandleFunc("POST /ui/pub/{id}/music", s.pubMusic)
 	s.mux.HandleFunc("POST /ui/pub/{id}/publish", s.pubPublish)
 	s.mux.HandleFunc("POST /ui/pub/{id}/policy", s.pubPolicy)
@@ -419,6 +420,22 @@ func (s *Server) pubClient(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.pub.SetClient(r.PathValue("id"), in.Client); err != nil {
+		fail(w, http.StatusBadRequest, err)
+		return
+	}
+	s.pubGet(w, r)
+}
+
+// pubLinks : la release publiée part par liens (dossier de liens du client)
+// ou sur ses fichiers d'origine, au choix du membre jusqu'à l'envoi.
+func (s *Server) pubLinks(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		On bool `json:"on"`
+	}
+	if !decode(w, r, 1<<12, &in) {
+		return
+	}
+	if err := s.pub.SetLinks(r.PathValue("id"), in.On); err != nil {
 		fail(w, http.StatusBadRequest, err)
 		return
 	}

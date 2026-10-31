@@ -139,7 +139,27 @@ window.lotSources = () => {
 
 // ---------- affichage ----------
 
+// Option « Seeder par liens » : visible si le réglage « Mes publications
+// aussi » est allumé et qu'un client a un dossier de liens ; cochée d'après le
+// réglage à chaque apparition (décocher vaut pour ce lot, rien n'est mémorisé).
+// Chaque release part dans le client qui a ses fichiers : avec plusieurs
+// dossiers de liens, l'option n'en nomme aucun (la ligne publiée dit lequel).
+function lotLinksRow() {
+  const s = ui.state || {};
+  const dirs = [...new Set((s.clients || []).map((c) => (c.linksDir || "").trim()).filter((d) => d))];
+  const where = dirs.length === 1 ? "dans « " + dirs[0] + " »" : "dans le dossier de liens de son client";
+  const show = !!(s.links && s.links.on && s.links.publish) && dirs.length > 0;
+  const row = $("#b-links-row");
+  if (row.dataset.where === where && row.dataset.show === String(show)) return;
+  row.dataset.where = where;
+  row.dataset.show = String(show);
+  row.classList.toggle("hidden", !show);
+  $("#b-links-dir").textContent = where;
+  if (!lot.running) $("#b-links").checked = show;
+}
+
 function lotRender() {
+  lotLinksRow();
   const has = lot.entries.length > 0;
   $("#b-tabs").classList.toggle("hidden", !has);
   $("#b-wrap").classList.toggle("hidden", !has);
@@ -169,7 +189,7 @@ function lotRender() {
   $("#b-all").disabled = lot.running || checkable.length === 0;
   // Pendant un lot, ses options et le choix du dossier sont figés : un
   // « Lister » serait défait au prochain suivi du lot.
-  for (const id of ["#b-sim", "#b-video", "#b-fixname", "#b-waitcheck", "#b-seedlater", "#b-cap", "#b-max", "#b-maxgib", "#b-list", "#b-browse", "#b-path"]) {
+  for (const id of ["#b-sim", "#b-video", "#b-fixname", "#b-waitcheck", "#b-seedlater", "#b-links", "#b-cap", "#b-max", "#b-maxgib", "#b-list", "#b-browse", "#b-path"]) {
     $(id).disabled = lot.running;
   }
   const resettable = lotResettable();
@@ -353,6 +373,7 @@ function lotOptions() {
     waitCheck: $("#b-waitcheck").checked,
     seedLater: $("#b-seedlater").checked,
     keepNfo: keepNfoOn(),
+    links: $("#b-links").checked,
     cap: Number($("#b-cap").value) || 0,
     max: Number($("#b-max").value) || 0,
     maxGib: Number($("#b-maxgib").value) || 0,
@@ -529,6 +550,7 @@ async function lotPoll() {
   } catch (e) {
     if (e.message === "session") return;
   }
+  lotLinksRow(); // sans lot ni liste, lotRender ne passe pas : l'option suit quand même le réglage
   const shown = $("#view-batch") && !$("#view-batch").classList.contains("hidden");
   if (lot.running) lotPollSoon(1000);
   else if (shown) lotPollSoon(5000);

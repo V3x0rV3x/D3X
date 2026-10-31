@@ -21,6 +21,7 @@ type Engine struct {
 	pause     time.Duration // entre deux publications (le site n'aime pas les rafales)
 	poll      time.Duration // entre deux lectures d'une publication (hachage, envoi)
 	checkPoll time.Duration // entre deux lectures de la vérification du client
+	noteWait  time.Duration // attente de l'ajout au client pour dire la voie du seed (liens ou origine)
 
 	mu     sync.Mutex
 	run    *Run
@@ -31,7 +32,7 @@ type Engine struct {
 
 // New prépare le moteur.
 func New(d Deps) *Engine {
-	return &Engine{deps: d, pause: 7 * time.Second, poll: 700 * time.Millisecond, checkPoll: 2 * time.Second}
+	return &Engine{deps: d, pause: 7 * time.Second, poll: 700 * time.Millisecond, checkPoll: 2 * time.Second, noteWait: 30 * time.Second}
 }
 
 // lot : le run en cours tel que la boucle le voit. Seule la boucle y écrit
@@ -255,6 +256,11 @@ func (e *Engine) loop(l *lot) {
 		e.set(func(r *Run) { r.Current = en.Path })
 		e.progress(fmt.Sprintf("Lot : %d / %d", r.Done+1, r.Total), en.Name)
 		e.processSafe(l, en)
+		// Option décochée : le seed ne passe jamais par les liens ni ne laisse
+		// de note, attendre l'ajout au client ne dirait rien.
+		if o.Links && !o.Sim && en.State == "published" && en.Job != "" {
+			e.noteLinks(l, en)
+		}
 		if o.WaitCheck && !o.Sim && en.State == "published" && en.Job != "" {
 			e.waitChecked(l, en)
 		}

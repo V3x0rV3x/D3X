@@ -45,6 +45,7 @@ func (d batchDeps) PubStart(src source.Source, path string) (*publish.Job, error
 }
 func (d batchDeps) PubGet(id string) (*publish.Job, bool) { return d.s.pub.Get(id) }
 func (d batchDeps) PubCancel(id string)                   { d.s.pub.Cancel(id) }
+func (d batchDeps) PubSetLinks(id string, on bool) error  { return d.s.pub.SetLinks(id, on) }
 func (d batchDeps) PubPublish(id string, fields map[string]string) error {
 	f := publishFields(fields)
 	// Même garde que la route /ui/pub/{id}/publish, que le lot n'emprunte pas,

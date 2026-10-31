@@ -103,6 +103,9 @@ type fakeQbit struct {
 	blank bool
 	// rechecks : demandes de vérification reçues, par info-hash.
 	rechecks map[string]int
+	// failAdd : le client refuse tout ajout (disque plein, droits) : l'ajout
+	// échoue sans que le torrent entre dans la liste.
+	failAdd bool
 }
 
 func (f *fakeQbit) namesOf(h string, raw []byte) map[int]string {
@@ -206,6 +209,10 @@ func (f *fakeQbit) handler(t *testing.T) http.Handler {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		f.adds = append(f.adds, fields)
+		if f.failAdd {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 		h := strings.ToLower(p.InfoHash)
 		if f.list[h] != nil {
 			io.WriteString(w, "Fails.")

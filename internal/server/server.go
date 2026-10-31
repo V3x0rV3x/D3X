@@ -387,6 +387,7 @@ type stateOut struct {
 	Links        struct {
 		On       bool `json:"on"`
 		Symbolic bool `json:"symbolic"`
+		Publish  bool `json:"publish"`
 	} `json:"links"`
 	SSH struct {
 		Configured bool   `json:"configured"`
@@ -435,7 +436,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	o.Discogs = s.cfg.DiscogsToken != ""
 	o.LastDir = s.cfg.LastDir
 	o.Watch = s.surveyState(s.cfg.Watch)
-	o.Links.On, o.Links.Symbolic = s.cfg.Links.On, s.cfg.Links.Symbolic
+	o.Links.On, o.Links.Symbolic, o.Links.Publish = s.cfg.Links.On, s.cfg.Links.Symbolic, s.cfg.Links.Publish
 	if s.opts.Remote {
 		o.Mode = "server"
 		if s.opts.Managed == "docker" {
@@ -504,6 +505,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 		Links *struct {
 			On       bool `json:"on"`
 			Symbolic bool `json:"symbolic"`
+			Publish  bool `json:"publish"`
 		} `json:"links"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<18)).Decode(&in); err != nil {
@@ -558,7 +560,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			fail(w, http.StatusBadRequest, errors.New("liens : indique le dossier des liens, tel que ton client le voit"))
 			return
 		}
-		c.Links.On, c.Links.Symbolic = in.Links.On, in.Links.Symbolic
+		c.Links.On, c.Links.Symbolic, c.Links.Publish = in.Links.On, in.Links.Symbolic, in.Links.Publish
 	}
 	restartWatch := false
 	if in.Watch != nil {

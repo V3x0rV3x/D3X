@@ -26,6 +26,10 @@ type Deps interface {
 	PubGet(id string) (*publish.Job, bool)
 	PubCancel(id string)
 	PubPublish(id string, fields map[string]string) error
+	// PubSetLinks : la publication partira par liens (dossier de liens du
+	// client) ou sur ses fichiers d'origine. Refus (client sans dossier de
+	// liens) : elle part sur l'origine.
+	PubSetLinks(id string, on bool) error
 	PubRead(ctx context.Context, id string, index int, off, n int64) ([]byte, int64, error)
 	PubFilePath(id string, index int) (string, bool)
 

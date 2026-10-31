@@ -172,3 +172,20 @@ func TestWatchEvery(t *testing.T) {
 		}
 	}
 }
+
+// « Mes publications aussi » : les publications rangées dans le dossier de
+// liens. Absent du JSON quand il est faux (réglages lisibles par une version
+// qui l'ignore).
+func TestLinksPublish(t *testing.T) {
+	b, err := json.Marshal(Links{On: true, Publish: true})
+	if err != nil || !strings.Contains(string(b), `"publish":true`) {
+		t.Fatalf("écrit : %s %v", b, err)
+	}
+	if b, _ := json.Marshal(Links{On: true}); strings.Contains(string(b), "publish") {
+		t.Fatalf("faux devrait être omis : %s", b)
+	}
+	var l Links
+	if err := json.Unmarshal([]byte(`{"on":true,"publish":true}`), &l); err != nil || !l.Publish {
+		t.Fatalf("lu : %+v %v", l, err)
+	}
+}

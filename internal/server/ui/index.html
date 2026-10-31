@@ -221,6 +221,7 @@
         <div class="step" id="st-map"><span class="dot"></span><div class="step-body"><b>Seed après publication</b>
           <div class="pub-client hidden" id="pub-client-row"><label for="pub-client" class="muted small">Dans le client</label><select id="pub-client"></select></div>
           <div class="sub" id="st-map-txt"></div>
+          <label class="check hidden" id="pub-links-row"><input type="checkbox" id="pub-links"> Par liens dans « <span id="pub-links-dir"></span> »</label>
           <div class="map-edit hidden" id="map-edit">
             <input type="text" id="map-dir" spellcheck="false" autocomplete="off" aria-label="Dossier vu par le client">
             <label class="check"><input type="checkbox" id="map-remember" checked> Retenir pour les prochaines publications</label>
@@ -381,6 +382,7 @@
         <label class="check inline" title="« Artiste - Album [FLAC] » devient « Artiste - Album [FLAC 24bit-96kHz] » : la qualité que V3X exige dans le nom, lue dans les fichiers"><input type="checkbox" id="b-fixname"> Compléter le nom des albums avec leur qualité</label>
         <label class="check inline" title="Disque lent : chaque release publiée est vérifiée par ton client avant que le lot passe à la suivante, au lieu d'empiler les vérifications"><input type="checkbox" id="b-waitcheck"> Attendre la vérification du client avant la release suivante</label>
         <label class="check inline" title="Disque lent : les releases publiées restent à l'arrêt dans ton client pendant que le lot hache les suivantes, puis démarrent toutes seules à la fin du lot, même arrêté en route"><input type="checkbox" id="b-seedlater"> Démarrer le seed à la fin du lot</label>
+        <label class="check inline hidden" id="b-links-row" title="La release publiée est rangée dans le dossier de liens de ton client, ses fichiers étant des liens vers l'original ; si les liens sont impossibles, elle part en seed sur ses fichiers d'origine et la ligne le dit"><input type="checkbox" id="b-links"> Seeder par liens <span id="b-links-dir"></span></label>
         <label class="inline-field">Plafond <input type="number" id="b-cap" min="0" value="300"> Gio</label>
         <label class="inline-field">Au plus <input type="number" id="b-max" min="0" value="0"> publications (0 = sans limite)</label>
         <label class="inline-field" title="Le lot s'arrête de publier une fois ce volume atteint : une release qui le dépasserait attend le lot suivant">Au plus <input type="number" id="b-maxgib" min="0" value="0"> Gio publiés (0 = sans limite)</label>
@@ -503,6 +505,8 @@
       <p class="hint">Chaque fichier de la release V3X y devient un lien physique vers le fichier de ta copie : aucune place en plus, ta copie n'est pas touchée, rien n'est écrasé. Le dossier doit exister, sur le même disque que tes fichiers, et D3X doit le voir (sur cette machine, avec les dossiers du client au-dessus, ou par ta seedbox). Utile surtout avec rTorrent, qui ne sait pas renommer.</p>
       <label class="check"><input id="l-sym" type="checkbox"> Liens symboliques plutôt que physiques</label>
       <p class="hint">Pour une copie qu'on ne peut pas lier physiquement : partage réseau en lecture seule (NFS, SMB), autre disque. Le lien vise le fichier tel que ton client le voit (avec les dossiers du client au-dessus) ; le dossier des liens peut alors être n'importe où, tant que ton client peut y écrire. Ne déplace pas ta copie ensuite : le lien pointerait dans le vide. Sous Windows, il faut le mode développeur.</p>
+      <label class="check"><input id="l-pub" type="checkbox"> Mes publications aussi</label>
+      <p class="hint">La release publiée (Publier, Lot, « Seeder la release V3X avec ces fichiers ») est rangée dans le dossier de liens du client qui la seede, ses fichiers étant des liens vers l'original, comme une release seedée pour plusieurs trackers. Sans dossier de liens pour ce client, ou si les liens échouent, elle part en seed sur ses fichiers d'origine, et D3X le dit. Publier et le Lot permettent de décocher pour une fois.</p>
     </fieldset>
     <fieldset id="ssh-set">
       <legend>Seedbox (SSH)</legend>

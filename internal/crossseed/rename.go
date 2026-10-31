@@ -391,26 +391,17 @@ func (e *Engine) addLinked(ctx context.Context, tg Target, cfg *config.Config, r
 		lp = append(lp, links.Pair{Src: clientJoin(save, p.To), Dst: clientJoin(dir, p.From), Size: size[p.Index]})
 	}
 	for root := range roots {
-		target := clientJoin(dir, root)
-		for _, x := range all {
-			if under(x.ContentPath, target) || under(target, x.ContentPath) {
-				return StRenamed, "« " + root + " » est déjà l'emplacement d'un torrent dans ton dossier de liens"
-			}
+		if occupied(all, clientJoin(dir, root)) {
+			return StRenamed, "« " + root + " » est déjà l'emplacement d'un torrent dans ton dossier de liens"
 		}
 	}
-	if err := link(ctx, tg.PathMap, dir, lp, false); err != nil {
-		return StRenamed, "liens : " + err.Error()
-	}
-	hash, err := e.AddAndVerify(ctx, tg, WithCategory(cfg, r.category), r.Key, r.Match.ID, raw, dir)
-	if err != nil {
-		if hash == "" || errors.Is(err, ErrInClient) {
-			_ = link(context.Background(), tg.PathMap, dir, lp, true)
-		}
+	if _, err := e.linkAndAdd(ctx, tg, WithCategory(cfg, r.category), link, dir, lp, r.Key, r.Match.ID, raw); err != nil {
+		var le *LinkError
 		switch {
 		case errors.Is(err, ErrInClient):
 			return StInClient, ""
-		case hash == "":
-			return StRenamed, err.Error()
+		case errors.As(err, &le):
+			return StRenamed, le.Reason
 		}
 		return StFailed, err.Error()
 	}

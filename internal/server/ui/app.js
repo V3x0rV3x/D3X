@@ -405,6 +405,7 @@ function fillSettings() {
   buildSwatches((s.appearance && s.appearance.uiAccent) || "");
   $("#l-on").checked = !!(s.links && s.links.on);
   $("#l-sym").checked = !!(s.links && s.links.symbolic);
+  $("#l-pub").checked = !!(s.links && s.links.publish);
   linksWarn();
   const w = s.watch || {};
   $("#w-on").checked = !!w.on;
@@ -838,7 +839,7 @@ async function saveSettings(ev) {
       checkUpdates: $("#f-updates").checked,
       uiTheme: $("#f-theme").value,
       uiAccent: (($("#f-accent").querySelector('[aria-checked="true"]') || {}).dataset || {}).accent || "",
-      links: { on: $("#l-on").checked, symbolic: $("#l-sym").checked },
+      links: { on: $("#l-on").checked, symbolic: $("#l-sym").checked, publish: $("#l-pub").checked },
       watch: {
         on: $("#w-on").checked,
         minutes: Number($("#w-min").value) || 30,
@@ -1778,8 +1779,15 @@ async function boot() {
     if ($("#l-sym").checked) $("#l-on").checked = true;
     linksWarn();
   });
+  // « Mes publications aussi » = des liens : cocher l'un coche les liens,
+  // décocher les liens décoche les publications.
+  $("#l-pub").addEventListener("change", () => {
+    if ($("#l-pub").checked) $("#l-on").checked = true;
+    linksWarn();
+  });
   $("#l-on").addEventListener("change", () => {
     if (!$("#l-on").checked) $("#l-sym").checked = false;
+    if (!$("#l-on").checked) $("#l-pub").checked = false;
     linksWarn();
   });
   $("#f-theme").addEventListener("change", previewAppearance);

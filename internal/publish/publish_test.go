@@ -108,6 +108,10 @@ type fakeSite struct {
 	uploaded []byte
 	fields   map[string]string
 	srv      *httptest.Server
+	// refuse : le site rejette la publication (400, nfo_required).
+	refuse bool
+	// uploads : envois reçus par un faux site écrit pour un test.
+	uploads atomic.Int32
 }
 
 func newFakeSite(t *testing.T) *fakeSite {
@@ -117,6 +121,11 @@ func newFakeSite(t *testing.T) *fakeSite {
 		case r.URL.Path == "/api/d3x/match":
 			io.WriteString(w, `{"results":[{"key":"0","match":null}]}`)
 		case r.URL.Path == "/api/torrents":
+			if s.refuse {
+				w.WriteHeader(http.StatusBadRequest)
+				io.WriteString(w, `{"error":"nfo_required"}`)
+				return
+			}
 			r.ParseMultipartForm(8 << 20)
 			s.fields = map[string]string{}
 			for k, v := range r.MultipartForm.Value {

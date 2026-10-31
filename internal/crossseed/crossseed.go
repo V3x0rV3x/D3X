@@ -187,9 +187,13 @@ type watch struct {
 	// après missGrace (un client qui redémarre répond un temps sans ses
 	// torrents ; exodius19, 21/10/26, Transmission en conteneur).
 	MissSince time.Time `json:"missSince,omitempty"`
-	Status    string    `json:"status"` // checking, failed
-	Progress  float64   `json:"progress"`
-	Detail    string    `json:"detail,omitempty"`
+	// Liens posés pour cet ajout (dossier de liens vu par le client, et les
+	// paires) : « Retirer » les enlève avec le torrent, l'original reste.
+	LinksDir string       `json:"linksDir,omitempty"`
+	Links    []links.Pair `json:"links,omitempty"`
+	Status   string       `json:"status"` // checking, failed
+	Progress float64      `json:"progress"`
+	Detail   string       `json:"detail,omitempty"`
 }
 
 // Engine garde l'état du cross-seed pour la page.
@@ -247,6 +251,29 @@ func (e *Engine) linkerFor(cfg *config.Config, t Target) Linker {
 	defer e.mu.Unlock()
 	return e.linker
 }
+
+// publishLinker : le créateur de liens pour une publication, si le membre a
+// coché « Mes publications aussi » en plus des liens, et si ce client a un
+// dossier de liens.
+func (e *Engine) publishLinker(cfg *config.Config, t Target) Linker {
+	if cfg == nil || !cfg.Links.Publish {
+		return nil
+	}
+	return e.linkerFor(cfg, t)
+}
+
+// LinkError : les liens n'ont pas pu être posés, ou l'ajout qui les suivait a
+// échoué avant d'entrer dans le client ; rien n'est resté. L'appelant peut se
+// replier sur les fichiers d'origine. Reason est le message, Err l'erreur
+// d'origine quand il y en a une.
+type LinkError struct {
+	Reason string
+	Err    error
+}
+
+func (e *LinkError) Error() string { return e.Reason }
+
+func (e *LinkError) Unwrap() error { return e.Err }
 
 // ---------- analyse ----------
 

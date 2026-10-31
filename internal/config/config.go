@@ -183,6 +183,12 @@ type Links struct {
 	// qu'on ne peut pas lier physiquement (partage en lecture seule, autre
 	// disque ; 12a3, 21/10/26). Le lien vise le fichier tel que le client le voit.
 	Symbolic bool `json:"symbolic,omitempty"`
+	// Publish : les publications aussi (Publier, Lot, « Seeder la release
+	// V3X ») : la release publiée est rangée dans le dossier de liens du
+	// client qui la seede, chaque fichier étant un lien vers l'original,
+	// comme une release seedée pour plusieurs trackers (foux, 31/10/26).
+	// Sans effet si On est faux ou si ce client n'a pas de dossier de liens.
+	Publish bool `json:"publish,omitempty"`
 }
 
 // Watch : la surveillance du client.
