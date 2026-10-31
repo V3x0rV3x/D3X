@@ -241,6 +241,16 @@
         <div class="field span2 hidden" id="kind-field">
           <p class="hint"><span id="kind-txt"></span> <button class="btn small" type="button" id="kind-go"></button></p>
         </div>
+        <!-- Catégorie avant l'œuvre : la recherche (TMDB, MusicBrainz, jeu,
+             livre) dépend d'elle (Nayr, 31/10/26). -->
+        <div class="field">
+          <label for="f-root">Catégorie</label>
+          <div class="row"><select id="f-root" aria-label="Catégorie"></select><select id="f-leaf" aria-label="Sous-catégorie"></select></div>
+        </div>
+        <div class="field">
+          <label for="f-lang">Langue</label>
+          <select id="f-lang"></select>
+        </div>
         <div class="field span2" id="tmdb-field">
           <label for="tmdb-q">Œuvre (TMDB)</label>
           <div class="row">
@@ -292,14 +302,6 @@
           <ul class="versions" id="versions-list"></ul>
           <p class="hint" id="versions-hint"></p>
           <p class="hint"><button class="btn small" type="button" id="versions-ignore" title="Tu ne publieras pas ta version : le Lot ne la proposera plus, et « Pas sur V3X » non plus si elle en vient.">Ignorer cette release</button></p>
-        </div>
-        <div class="field">
-          <label for="f-root">Catégorie</label>
-          <div class="row"><select id="f-root" aria-label="Catégorie"></select><select id="f-leaf" aria-label="Sous-catégorie"></select></div>
-        </div>
-        <div class="field">
-          <label for="f-lang">Langue</label>
-          <select id="f-lang"></select>
         </div>
         <div class="field span2">
           <label for="f-name">Nom de la release</label>
