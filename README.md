@@ -229,7 +229,7 @@ Chaque version publie `checksums.txt` (l'empreinte SHA-256 de chaque fichier) et
 2. **Ton client torrent**, par son interface web, ou plusieurs (« Ajouter un autre client »). Le bouton *Détecter sur ce PC* trouve ceux qui tournent ici. « Tester la connexion » essaie un client sans rien enregistrer ; s'il ne répond pas, D3X dit quoi vérifier (adresse, port, pare-feu, adresse vue depuis Docker).
 3. **Ta seedbox** (facultatif), par SSH, pour publier ce qui s'y trouve.
 4. **Les dossiers du client** (facultatif), pour chaque client : s'il tourne ailleurs (NAS, Docker), une ligne par dossier, son chemin ici et le même vu par le client.
-5. **Catégorie et étiquette** (facultatif), posées sur chaque torrent ajouté par D3X pour les retrouver dans ton client, et une **catégorie de tes publications** pour ranger à part ce que tu publies avec Publier et le Lot (vide : la même). Dans la catégorie, `{cat}` reprend celle de ta copie d'origine dans qBittorrent : `{cat}.cross` range un cross-seed de « tv » dans « tv.cross » (sans catégorie d'origine : « cross »).
+5. **Catégorie et étiquette** (facultatif), posées sur chaque torrent ajouté par D3X pour les retrouver dans ton client, et une **catégorie** et une **étiquette de tes publications** pour ranger à part ce que tu publies avec Publier et le Lot (vide : les mêmes). Dans la catégorie, `{cat}` reprend celle de ta copie d'origine dans qBittorrent : `{cat}.cross` range un cross-seed de « tv » dans « tv.cross » (sans catégorie d'origine : « cross »).
 
 | Client | Adresse habituelle | À activer |
 | --- | --- | --- |

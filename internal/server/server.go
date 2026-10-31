@@ -378,6 +378,7 @@ type stateOut struct {
 	Clients      []clientOut `json:"clients"`
 	Category     string      `json:"category"`
 	PubCategory  string      `json:"pubCategory"`
+	PubTag       string      `json:"pubTag"`
 	HashLimit    int         `json:"hashLimit"` // Mo/s, 0 = sans limite
 	Discogs      bool        `json:"discogs"`   // jeton Discogs enregistré
 	Tag          string      `json:"tag"`
@@ -431,7 +432,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	}
 	o.Clients = s.clientsOut()
 	o.Category, o.Tag, o.CheckUpdates = s.cfg.Category, s.cfg.Tag, s.cfg.CheckUpdates
-	o.PubCategory = s.cfg.PubCategory
+	o.PubCategory, o.PubTag = s.cfg.PubCategory, s.cfg.PubTag
 	o.HashLimit = s.cfg.HashLimitMB
 	o.Discogs = s.cfg.DiscogsToken != ""
 	o.LastDir = s.cfg.LastDir
@@ -481,6 +482,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 		V3XKey      string `json:"v3xKey"`
 		Category    string `json:"category"`
 		PubCategory string `json:"pubCategory"`
+		PubTag      string `json:"pubTag"`
 		// HashLimit : Mo/s ; absent = inchangé.
 		HashLimit *int `json:"hashLimit"`
 		// DiscogsToken : vide = inchangé ; DiscogsClear le retire.
@@ -533,6 +535,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 	}
 	c.Category = strings.TrimSpace(in.Category)
 	c.PubCategory = strings.TrimSpace(in.PubCategory)
+	c.PubTag = strings.TrimSpace(in.PubTag)
 	if in.HashLimit != nil {
 		c.HashLimitMB = min(max(*in.HashLimit, 0), 10000)
 	}

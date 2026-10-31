@@ -782,14 +782,20 @@ func private(src source.Source, where string) error {
 }
 
 // pubConfig : la release publiée part dans la catégorie des publications si
-// elle est réglée (demande d'Ekhstaz), sinon dans celle des cross-seeds.
+// elle est réglée (demande d'Ekhstaz), sinon dans celle des cross-seeds ; de
+// même pour l'étiquette (Encrypted_Shards).
 func pubConfig(cfg *config.Config) *config.Config {
-	if cfg == nil || strings.TrimSpace(cfg.PubCategory) == "" {
-		// Modèle {cat} des cross-seeds : une publication n'a pas de copie
-		// d'origine rangée, il reste le texte autour.
+	if cfg == nil {
 		return crossseed.WithCategory(cfg, "")
 	}
 	c := *cfg
-	c.Category = strings.TrimSpace(cfg.PubCategory)
+	if v := strings.TrimSpace(cfg.PubCategory); v != "" {
+		c.Category = v
+	}
+	if v := strings.TrimSpace(cfg.PubTag); v != "" {
+		c.Tag = v
+	}
+	// Modèle {cat} des cross-seeds : une publication n'a pas de copie
+	// d'origine rangée, il reste le texte autour.
 	return crossseed.WithCategory(&c, "")
 }

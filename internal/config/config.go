@@ -42,6 +42,8 @@ type Config struct {
 	// Catégorie des releases publiées avec D3X (Publier, Lot), si elle doit
 	// différer de celle des cross-seeds (demande d'Ekhstaz). Vide = Category.
 	PubCategory string `json:"pubCategory,omitempty"`
+	// Étiquette des publications, de même (Encrypted_Shards). Vide = Tag.
+	PubTag string `json:"pubTag,omitempty"`
 	// DiscogsToken : jeton personnel Discogs (facultatif), pour chercher une
 	// pochette quand MusicBrainz n'en a pas. Jamais renvoyé à la page.
 	DiscogsToken string `json:"discogsToken,omitempty"`
