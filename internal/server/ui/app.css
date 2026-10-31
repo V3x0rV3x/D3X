@@ -588,3 +588,9 @@ dialog .confirm dd { margin: 0; word-break: break-word; }
 /* Filtre texte des listes (quebecman, 21/10/26). */
 .list-filter { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; }
 .list-filter input[type="text"] { max-width: 440px; font-size: 14px; padding: 7px 10px; }
+.tracker-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 0 0 10px; }
+.tracker-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.tracker-chips .chip { padding: 3px 10px; font-size: 12px; gap: 6px; }
+.tracker-chips .chip .n { color: var(--muted); font-variant-numeric: tabular-nums; }
+.tracker-chips .chip.off { opacity: .55; }
+.tracker-chips .chip.off .txt { text-decoration: line-through; }

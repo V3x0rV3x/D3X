@@ -364,6 +364,8 @@ func TestScanAndApply(t *testing.T) {
 	otherB := mkTorrent("Release.B", filesB, "https://autre.invalid/announce", "AUTRE")
 	otherC := mkTorrent("Release.C", filesC, "https://autre.invalid/announce", "AUTRE")
 	mine := mkTorrent("Release.D", map[string]int64{"D.mkv": 5_000_000}, "https://announce.v3x.club/abc/announce", "V3X")
+	// Torrent V3X à l'arrêt : « Déjà en seed pour V3X », mais dit à l'arrêt.
+	idle := mkTorrent("Release.E", map[string]int64{"E.mkv": 6_000_000}, "https://announce.v3x.club/abc/announce", "V3X")
 
 	// Côté V3X : A et B existent à l'identique (autre info-hash : source V3X).
 	v3xA := mkTorrent("Release.A", filesA, "https://announce.v3x.club/pk/announce", "")
@@ -385,7 +387,8 @@ func TestScanAndApply(t *testing.T) {
 		tr   string
 	}{{otherA, "/data/autre", "autre.invalid"}, {otherB, "/data/autre", "autre.invalid"}, {otherC, "/data/autre", "autre.invalid"}, {mine, "/data/v3x", "announce.v3x.club"},
 		// Deuxième copie de A, d'un troisième tracker, rangée ailleurs.
-		{mkTorrent("Release.A", filesA, "https://troisieme.invalid/announce", "TROIS"), "/data/troisieme", "troisieme.invalid"}} {
+		{mkTorrent("Release.A", filesA, "https://troisieme.invalid/announce", "TROIS"), "/data/troisieme", "troisieme.invalid"},
+		{idle, "/data/v3x", "announce.v3x.club"}} {
 		p, _ := torrent.Parse(x.raw)
 		h := strings.ToLower(p.InfoHash)
 		fq.list[h] = &fakeTorrent{Torrent: qbit.Torrent{
@@ -393,6 +396,8 @@ func TestScanAndApply(t *testing.T) {
 			Size: p.Total, TotalSize: p.Total, MagnetURI: "magnet:?xt=urn:btih:" + h + "&tr=https%3A%2F%2F" + x.tr + "%2Fannounce",
 		}, raw: x.raw}
 	}
+	pe, _ := torrent.Parse(idle)
+	fq.list[strings.ToLower(pe.InfoHash)].State = "stoppedUP"
 	qs := httptest.NewServer(fq.handler(t))
 	defer qs.Close()
 
@@ -476,6 +481,24 @@ func TestScanAndApply(t *testing.T) {
 	for k, s := range want {
 		if got[k] != s {
 			t.Fatalf("%s : %s, attendu %s (lignes : %v)", k, got[k], s, got)
+		}
+	}
+	// Trackers de la ligne (copies fusionnées comprises, sans V3X) et torrent
+	// V3X à l'arrêt.
+	for _, r := range e.Rows() {
+		switch r.Name {
+		case "Release.A":
+			if strings.Join(r.Trackers, ",") != "autre.invalid,troisieme.invalid" {
+				t.Fatalf("Release.A : trackers %v", r.Trackers)
+			}
+		case "Release.D":
+			if r.Idle || len(r.Trackers) != 0 {
+				t.Fatalf("Release.D en seed pour V3X : idle %v, trackers %v", r.Idle, r.Trackers)
+			}
+		case "Release.E":
+			if r.Status != StOnV3X || !r.Idle || !strings.Contains(r.Detail, "à l'arrêt") {
+				t.Fatalf("Release.E à l'arrêt : %s, idle %v, %q", r.Status, r.Idle, r.Detail)
+			}
 		}
 	}
 	// Les moins seedées d'abord.

@@ -43,6 +43,8 @@ const UUID = /^[0-9a-f-]{36}$/i;
 const ui = {
   // Filtre texte des listes (quebecman, 21/10/26) : mots à garder, « -mot » à écarter.
   filter: "",
+  // Trackers masqués dans les listes (Turias, 31/10/26), gardés sur l'appareil.
+  hiddenTrackers: loadHiddenTrackers(),
   state: null,
   rows: [],
   version: -1,
@@ -1037,10 +1039,67 @@ function setOf(r) {
 // Filtre texte : chaque mot doit être dans le nom (celui du client ou de V3X),
 // un mot précédé de « - » l'écarte. « 1080p MULTi -720p » ; vide = tout.
 function filterMatch(r) {
+  if (!trackerShown(r)) return false;
   const words = ui.filter.toLowerCase().split(/\s+/).filter(Boolean);
   if (!words.length) return true;
   const name = (r.name + " " + (r.match && r.match.name ? r.match.name : "")).toLowerCase();
   return words.every((w) => (w[0] === "-" && w.length > 1 ? !name.includes(w.slice(1)) : name.includes(w)));
+}
+
+// Filtre par tracker : une ligne n'est cachée que si TOUS ses trackers le
+// sont (une release seedée aussi sur un tracker affiché reste là). Une ligne
+// dont le client ne donne pas le tracker reste toujours affichée.
+function trackerShown(r) {
+  if (!ui.hiddenTrackers.size || !r.trackers || !r.trackers.length) return true;
+  return r.trackers.some((h) => !ui.hiddenTrackers.has(h));
+}
+
+function loadHiddenTrackers() {
+  try {
+    const v = JSON.parse(localStorage.getItem("d3x-hidden-trackers") || "[]");
+    return new Set(Array.isArray(v) ? v.filter((h) => typeof h === "string") : []);
+  } catch (e) {
+    return new Set();
+  }
+}
+
+function toggleTracker(host) {
+  if (ui.hiddenTrackers.has(host)) ui.hiddenTrackers.delete(host);
+  else ui.hiddenTrackers.add(host);
+  try { localStorage.setItem("d3x-hidden-trackers", JSON.stringify([...ui.hiddenTrackers])); } catch (e) { /* rien */ }
+  // Comme le filtre texte : ce qui est caché ne reste pas coché.
+  for (const r of ui.rows) {
+    if (filterMatch(r)) continue;
+    ui.selected.delete(r.key);
+    ui.picked.delete(r.key);
+  }
+  ui.shown = PAGE;
+  renderRows();
+}
+
+// Puces des trackers de l'onglet ouvert, avec le nombre de releases de chacun :
+// un clic masque ou réaffiche ses releases. Affichées dès qu'il y a deux
+// trackers dans l'onglet, ou un tracker masqué.
+function renderTrackers(list) {
+  const n = new Map();
+  for (const r of list) for (const h of r.trackers || []) n.set(h, (n.get(h) || 0) + 1);
+  const hosts = [...n.keys()].sort((a, b) => n.get(b) - n.get(a) || a.localeCompare(b));
+  const box = $("#tracker-filter");
+  const show = hosts.length > 1 || hosts.some((h) => ui.hiddenTrackers.has(h));
+  box.classList.toggle("hidden", !show);
+  const chips = $("#tracker-chips");
+  chips.replaceChildren();
+  if (!show) return;
+  for (const h of hosts) {
+    const off = ui.hiddenTrackers.has(h);
+    const b = el("button", "chip" + (off ? " off" : " ok"));
+    b.type = "button";
+    b.setAttribute("aria-pressed", String(!off));
+    b.title = off ? "Réafficher les releases de ce tracker" : "Masquer les releases de ce tracker (une release aussi sur un tracker affiché reste visible)";
+    b.append(el("span", "dot"), el("span", "txt", h), el("span", "n", String(n.get(h))));
+    b.addEventListener("click", () => toggleTracker(h));
+    chips.append(b);
+  }
 }
 
 function checkable(r) {
@@ -1312,8 +1371,9 @@ function renderRows() {
   const tab = TABS.find((t) => t.id === ui.tab) || TABS[0];
   let list = ui.rows.filter((r) => tabOfRow(r).id === tab.id && (ui.showIgnored || !isIgnored(r)));
   const before = list.length;
+  renderTrackers(list);
   list = list.filter(filterMatch);
-  $("#f-text-n").textContent = ui.filter.trim() ? list.length + " sur " + before : "";
+  $("#f-text-n").textContent = list.length < before || ui.filter.trim() ? list.length + " sur " + before : "";
   const ignLine = $("#ign-line");
   const nIgnored = nIgnoredIn[tab.id] || 0;
   ignLine.classList.toggle("hidden", !nIgnored);
@@ -1472,7 +1532,9 @@ function rowEl(r) {
     ? ["À ajouter sous tes noms", "add"]
     : r.status === "same_video" && r.match && r.match.kind === "same_file"
       ? ["Même fichier sur V3X", ""] // image disque d'un jeu, même nom de release (1.1.25)
-      : STATUS[r.status] || [r.status, ""];
+      : r.idle && (r.status === "on_v3x" || r.status === "in_client")
+        ? ["À l'arrêt", "warn"] // torrent V3X arrêté dans le client : ne seede pas (Encrypted_Shards, 1.1.45)
+        : STATUS[r.status] || [r.status, ""];
   box.append(el("span", "pill " + kind, label));
   if (r.status === "checking" && r.progress > 0) {
     const bar = el("div", "mini");

@@ -33,6 +33,7 @@ Le code est ouvert : tu peux vérifier tout ce qui précède avant de lancer l'o
 L'analyse range tes releases en onglets :
 
 - **À ajouter** : identiques sur V3X. Les **relais** passent en tête (releases rares lâchées par un membre : une prime en jetons aux premiers qui la reprennent, après 24 h de seed), puis les **releases mortes** (plus aucun seeder depuis trois jours : ton seed les ramène, et la prime de résurrection tombe une fois qu'elles ont servi).
+- **Déjà en seed pour V3X** : la release V3X est déjà dans ton client (ou la même vidéo, dans un pack de saison par exemple). Si ce torrent V3X est à l'arrêt ou incomplet, la ligne porte la pastille **À l'arrêt** : il ne seede pas pour V3X tant que tu ne le relances pas dans ton client.
 - **Noms différents** : les mêmes fichiers sous d'autres noms (voir les [questions](#questions)).
 - **Pas sur V3X** : ce que tu seedes ailleurs et qui manque à V3X. « Publier » ouvre la fiche d'une release, ou coches-en plusieurs pour les passer au crible du lot. Celles qui répondent à une **demande ouverte** sur le site sont en tête, avec la prime ; une fois ta release publiée et validée, D3X la propose au demandeur d'un clic. Une release seedée plusieurs fois (un torrent par tracker, sur des liens physiques) n'y apparaît qu'une fois, avec son nombre de copies (×2, ×3…). Celles d'une team qui interdit le réupload, ou le soumet à son accord, portent une pastille qui le dit, comme celles d'un **groupe refusé sur V3X** (avec la raison donnée par le site), et une case masque celles que V3X refusera. Le tag est reconnu aussi séparé par un espace (`… x264 ac3 mHDgz.mkv`). Une copie sans tag, ou renommée, de la même taille au fichier près qu'une copie taguée que tu as (au-delà de 100 Mio) porte la pastille « Detag » de cette team : un detag d'une team qui interdit le réupload ne se publie pas, D3X ne l'ouvre pas dans Publier et ne la passe pas au lot.
 - **Autres** :
@@ -41,6 +42,8 @@ L'analyse range tes releases en onglets :
   - **Retirée de V3X** : aucune fiche en ligne, mais V3X a retiré (ou remplacé, archivé) une fiche de ce contenu. D3X ne la propose pas à la publication ; le motif s'affiche si c'était ta fiche. Publier reste possible si la raison ne s'applique plus.
 
 Au-dessus de la liste, **Filtrer** ne garde que les releases dont le nom contient tous tes mots ; un mot précédé de « - » les écarte (`1080p MULTi -720p`, ou le tag d'une team). « Tout cocher » ne prend que ce qui est affiché.
+
+Dès qu'un onglet contient des releases de plusieurs trackers, une ligne **Trackers** les liste avec leur nombre de releases : un clic masque celles d'un tracker (par exemple un tracker étranger dont tu ne publieras rien sur V3X), un autre clic les réaffiche. Une release seedée aussi sur un tracker affiché reste visible. Le choix reste sur l'appareil.
 
 Une release classée d'une façon qui te surprend : **Diagnostic** affiche ce que D3X en sait (nom, fichiers et tailles, ce qu'il en a conclu), sans info-hash ni chemin sur ton disque, prêt à copier pour le staff.
 

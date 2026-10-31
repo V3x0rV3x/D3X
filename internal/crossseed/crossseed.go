@@ -18,6 +18,7 @@ import (
 	"os"
 	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -122,6 +123,13 @@ type Row struct {
 	// Client : le client qui a cette copie (identifiant), et son nom.
 	Client     string `json:"client,omitempty"`
 	ClientName string `json:"clientName,omitempty"`
+	// Trackers : les trackers (hôtes, sans V3X) des torrents de la ligne, pour
+	// le filtre par tracker de la page (Turias, 31/10/26). Restent sur ce PC :
+	// le diagnostic ne les donne pas.
+	Trackers []string `json:"trackers,omitempty"`
+	// Idle : « Déjà en seed pour V3X », mais le torrent V3X est à l'arrêt (ou
+	// incomplet) dans le client : il ne seede pas (Encrypted_Shards, 31/10/26).
+	Idle bool `json:"idle,omitempty"`
 	// Alts : les autres copies fusionnées dans cette ligne (un torrent par
 	// tracker, souvent sur des liens physiques). Publier et le Lot prennent
 	// la première que D3X sait lire (exodius19, 21/10/26).
@@ -131,6 +139,26 @@ type Row struct {
 	contentPath string
 	category    string // catégorie de la copie dans son client (modèle {cat})
 	sig         *Sig
+}
+
+// Torrent V3X à l'arrêt ou incomplet dans le client : la ligne reste dans
+// « Déjà en seed pour V3X », mais le dit.
+const (
+	idleWhy  = "il est à l'arrêt ou incomplet : il ne seede pas pour V3X tant que tu ne le relances pas dans ton client"
+	idleText = "le torrent V3X de cette copie " + idleWhy
+)
+
+// addHosts ajoute à list les trackers de hosts (sans V3X ni doublon), triés.
+func addHosts(list, hosts []string) []string {
+	for _, h := range hosts {
+		h = strings.ToLower(strings.TrimSpace(h))
+		if h == "" || isV3XHost(h) || slices.Contains(list, h) {
+			continue
+		}
+		list = append(list, h)
+	}
+	slices.Sort(list)
+	return list
 }
 
 // RowCopy : une copie de plus d'une ligne, dans son client.
@@ -361,12 +389,15 @@ func (e *Engine) runScan(ctx context.Context) error {
 	// Toutes les listes fusionnées. Ce qui est déjà dans l'un des clients
 	// (info-hash connu) n'est jamais proposé à l'ajout.
 	known := map[string]bool{}
+	// live : info-hash d'un torrent complet et démarré, qui seede vraiment.
+	live := map[string]bool{}
 	type group struct {
 		t      Target
 		rank   int // place du client dans les réglages
 		path   string
 		copies []client.Torrent
 		onV3X  bool
+		v3xOn  bool // une copie qui annonce chez V3X est démarrée
 	}
 	groups := map[string]*group{}
 	var order []string
@@ -376,6 +407,9 @@ func (e *Engine) runScan(ctx context.Context) error {
 		for _, t := range l.List {
 			for _, h := range t.Hashes {
 				known[h] = true
+				if t.Progress >= 1 && !t.Stopped {
+					live[h] = true
+				}
 			}
 			if t.Progress < 1 || t.ContentPath == "" {
 				continue
@@ -393,6 +427,7 @@ func (e *Engine) runScan(ctx context.Context) error {
 			for _, h := range t.Trackers {
 				if isV3XHost(h) {
 					g.onV3X = true
+					g.v3xOn = g.v3xOn || !t.Stopped
 				}
 			}
 		}
@@ -419,10 +454,16 @@ func (e *Engine) runScan(ctx context.Context) error {
 		rep := g.copies[0]
 		hash := strings.ToLower(rep.Hash)
 		r := &Row{Key: hash + "@" + g.t.ID, hash: hash, Name: rep.Name, Size: rep.TotalSize, Copies: len(g.copies), contentPath: rep.ContentPath, category: rep.Category, Path: rep.ContentPath, Client: g.t.ID, ClientName: g.t.Name}
+		for _, c := range g.copies {
+			r.Trackers = addHosts(r.Trackers, c.Trackers)
+		}
 		rows[r.Key] = r
 		rowOf[k] = r
 		if g.onV3X {
 			r.Status = StOnV3X
+			if !g.v3xOn {
+				r.Idle, r.Detail = true, idleText
+			}
 			continue
 		}
 		if s, ok := cache[hash]; ok {
@@ -542,8 +583,14 @@ func (e *Engine) runScan(ctx context.Context) error {
 			switch {
 			case m.Kind == "self":
 				r.Status = StOnV3X
+				if !live[strings.ToLower(m.InfoHash)] {
+					r.Idle, r.Detail = true, idleText
+				}
 			case known[strings.ToLower(m.InfoHash)]:
 				r.Status = StInClient
+				if !live[strings.ToLower(m.InfoHash)] {
+					r.Idle, r.Detail = true, "la release V3X « "+m.Name+" » est dans ton client, mais "+idleWhy
+				}
 			case m.Kind == "exact":
 				r.Status = StAdd
 			default:
@@ -572,7 +619,7 @@ func (e *Engine) runScan(ctx context.Context) error {
 	// Simple confort : si le site ne répond pas, ces lignes restent « Pas sur
 	// V3X », l'analyse ne tombe pas pour autant, mais le dit (1.1.28 : l'échec
 	// passait sans un mot).
-	if err := e.markSameVideo(ctx, env.V3X, retry, byID, left, known, fresh); err != nil {
+	if err := e.markSameVideo(ctx, env.V3X, retry, byID, left, known, live, fresh); err != nil {
 		if ctx.Err() != nil {
 			return errors.New("analyse arrêtée")
 		}
@@ -599,6 +646,7 @@ func (e *Engine) runScan(ctx context.Context) error {
 		if f := firstOf[r.Match.ID]; f != nil {
 			f.Copies += r.Copies
 			f.Alts = append(append(f.Alts, RowCopy{Client: r.Client, Path: r.Path}), r.Alts...)
+			f.Trackers = addHosts(f.Trackers, r.Trackers)
 			delete(rows, r.Key)
 			continue
 		}
@@ -617,6 +665,7 @@ func (e *Engine) runScan(ctx context.Context) error {
 		if f := sameRelease[r.sig.ContentHash]; f != nil {
 			f.Copies += r.Copies
 			f.Alts = append(append(f.Alts, RowCopy{Client: r.Client, Path: r.Path}), r.Alts...)
+			f.Trackers = addHosts(f.Trackers, r.Trackers)
 			delete(rows, r.Key)
 			continue
 		}
@@ -730,7 +779,7 @@ func sameFileName(a, b string) bool {
 // fiche V3X : la ligne passe en « Même vidéo sur V3X », ou en « Déjà dans le
 // client » si cette fiche y est déjà. Seule la taille part au site, comme pour
 // la Médiathèque.
-func (e *Engine) markSameVideo(ctx context.Context, v *v3x.Client, retry *v3x.Retry, byID map[string]Target, rows []*Row, known map[string]bool, fresh map[string]Sig) error {
+func (e *Engine) markSameVideo(ctx context.Context, v *v3x.Client, retry *v3x.Retry, byID map[string]Target, rows []*Row, known, live map[string]bool, fresh map[string]Sig) error {
 	reread := false
 	for _, r := range rows {
 		// Image disque : son nom de fichier sert au rapprochement (1.1.28), une
@@ -799,6 +848,9 @@ func (e *Engine) markSameVideo(ctx context.Context, v *v3x.Client, retry *v3x.Re
 				r.Match = &v3x.Match{Kind: kind, ID: best.ID, Name: best.Name, InfoHash: best.InfoHash, Seeders: best.Seeders, Leechers: best.Leechers, Size: best.Size}
 				if inClient {
 					r.Status, r.Detail = StInClient, what+" est déjà dans ton client avec la fiche V3X « "+best.Name+" »"
+					if !live[strings.ToLower(best.InfoHash)] {
+						r.Idle, r.Detail = true, r.Detail+", mais "+idleWhy
+					}
 				} else {
 					r.Status, r.Detail = StSameVideo, what+" est sur V3X dans « "+best.Name+" », sous un autre nom ou avec d'autres fichiers à côté"
 				}
