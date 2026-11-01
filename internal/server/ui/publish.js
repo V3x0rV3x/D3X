@@ -1390,6 +1390,7 @@ function renderBar() {
   else txt = "Tout est prêt.";
   $("#pub-bar-txt").textContent = txt;
   go.disabled = !!pub.policy || miss.length > 0 || j.state !== "ready";
+  $("#pub-clear").disabled = j.state === "publishing";
   // Garder pour le lot : la fiche complète suffit, le .torrent peut finir plus tard.
   const keep = $("#pub-keep");
   keep.classList.toggle("hidden", !pub.fromLot);
@@ -1684,6 +1685,9 @@ function bindPublish() {
   $("#fs-go").addEventListener("click", () => browse($("#fs-path").value, pub.dir));
   $("#fs-path").addEventListener("keydown", (e) => { if (e.key === "Enter") browse($("#fs-path").value, pub.dir); });
   $("#job-cancel").addEventListener("click", cancelJob);
+  // Le même abandon en bas de la fiche, près de « Publier » (pitbullonf1r,
+  // 01/11/26) : « Changer de release » est en haut, hors de vue en fin de fiche.
+  $("#pub-clear").addEventListener("click", cancelJob);
   $("#versions-ignore").addEventListener("click", ignoreRelease);
   $("#map-save").addEventListener("click", saveMap);
   $("#pub-client").addEventListener("change", pickClient);

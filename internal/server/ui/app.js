@@ -45,6 +45,8 @@ const ui = {
   filter: "",
   // Trackers masqués dans les listes (Turias, 31/10/26), gardés sur l'appareil.
   hiddenTrackers: loadHiddenTrackers(),
+  // Trackers de l'onglet ouvert (puces affichées), pour Tout afficher / Tout masquer.
+  trackerHosts: [],
   state: null,
   rows: [],
   version: -1,
@@ -1068,6 +1070,21 @@ function loadHiddenTrackers() {
 function toggleTracker(host) {
   if (ui.hiddenTrackers.has(host)) ui.hiddenTrackers.delete(host);
   else ui.hiddenTrackers.add(host);
+  trackersChanged();
+}
+
+// Tout afficher ou tout masquer d'un clic les trackers de l'onglet ouvert
+// (pitbullonf1r, 01/11/26) : pour n'en garder qu'un, « Tout masquer » puis un
+// clic sur le sien.
+function setAllTrackers(hidden) {
+  for (const h of ui.trackerHosts) {
+    if (hidden) ui.hiddenTrackers.add(h);
+    else ui.hiddenTrackers.delete(h);
+  }
+  trackersChanged();
+}
+
+function trackersChanged() {
   try { localStorage.setItem("d3x-hidden-trackers", JSON.stringify([...ui.hiddenTrackers])); } catch (e) { /* rien */ }
   // Comme le filtre texte : ce qui est caché ne reste pas coché.
   for (const r of ui.rows) {
@@ -1086,6 +1103,7 @@ function renderTrackers(list) {
   const n = new Map();
   for (const r of list) for (const h of r.trackers || []) n.set(h, (n.get(h) || 0) + 1);
   const hosts = [...n.keys()].sort((a, b) => n.get(b) - n.get(a) || a.localeCompare(b));
+  ui.trackerHosts = hosts;
   const box = $("#tracker-filter");
   const show = hosts.length > 1 || hosts.some((h) => ui.hiddenTrackers.has(h));
   box.classList.toggle("hidden", !show);
@@ -1877,6 +1895,8 @@ async function boot() {
     }
     renderRows();
   });
+  $("#tr-all").addEventListener("click", () => setAllTrackers(false));
+  $("#tr-none").addEventListener("click", () => setAllTrackers(true));
   $("#f-text").addEventListener("input", (ev) => {
     ui.filter = ev.target.value;
     // Ce que le filtre cache ne reste pas coché : « Tout cocher » puis

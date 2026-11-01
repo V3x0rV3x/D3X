@@ -43,7 +43,7 @@ L'analyse range tes releases en onglets :
 
 Au-dessus de la liste, **Filtrer** ne garde que les releases dont le nom contient tous tes mots ; un mot précédé de « - » les écarte (`1080p MULTi -720p`, ou le tag d'une team). « Tout cocher » ne prend que ce qui est affiché.
 
-Dès qu'un onglet contient des releases de plusieurs trackers, une ligne **Trackers** les liste avec leur nombre de releases : un clic masque celles d'un tracker (par exemple un tracker étranger dont tu ne publieras rien sur V3X), un autre clic les réaffiche. Une release seedée aussi sur un tracker affiché reste visible. Le choix reste sur l'appareil.
+Dès qu'un onglet contient des releases de plusieurs trackers, une ligne **Trackers** les liste avec leur nombre de releases : un clic masque celles d'un tracker (par exemple un tracker étranger dont tu ne publieras rien sur V3X), un autre clic les réaffiche. « Tout masquer » puis un clic sur un tracker n'affiche que le sien ; « Tout afficher » remet tout. Une release seedée aussi sur un tracker affiché reste visible. Le choix reste sur l'appareil.
 
 Une release classée d'une façon qui te surprend : **Diagnostic** affiche ce que D3X en sait (nom, fichiers et tailles, ce qu'il en a conclu), sans info-hash ni chemin sur ton disque, prêt à copier pour le staff.
 
@@ -121,6 +121,7 @@ Certains clients ne savent pas renommer les fichiers d'un torrent (rTorrent), et
 - **Charger un fichier** : remplace la présentation par celle d'un fichier, un .txt en BBCode, ou un .html si V3X t'autorise la présentation en HTML.
 - **Pochette Discogs** : pour un album sans pochette sur MusicBrainz, avec ton jeton Discogs (Réglages ; il se crée sur discogs.com ▸ Paramètres ▸ Développeurs). Tu choisis l'édition, D3X récupère sa pochette en grand, l'héberge sur V3X et la place en tête de la présentation.
 - **Seed automatique**, même quand ton client tourne sur un NAS ou dans Docker : D3X devine où le client voit tes fichiers, d'après les torrents qu'il seede déjà.
+- **Effacer** : en bas de la fiche, à côté de « Publier sur V3X », abandonne la release sans rien publier et revient au choix d'une release (comme « Changer de release », en haut).
 - Fichiers cachés et aperçus de médiathèque écartés (`.DS_Store`, `*.trickplay`, `extrafanart`…), liens symboliques suivis sans boucle, fichier encore en cours d'écriture détecté.
 
 ![La fiche d'un film dans Publier : l'éditeur de présentation et l'aperçu tel que le site l'affichera](docs/images/publier-apercu.png)

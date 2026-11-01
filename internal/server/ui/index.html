@@ -82,6 +82,7 @@
     <div class="tracker-filter hidden" id="tracker-filter">
       <span class="small muted">Trackers (un clic masque ou réaffiche) :</span>
       <span class="tracker-chips" id="tracker-chips"></span>
+      <span class="small"><button type="button" class="linkish" id="tr-all">Tout afficher</button> · <button type="button" class="linkish" id="tr-none">Tout masquer</button></span>
     </div>
     <label class="check small hidden" id="none-filter"><input type="checkbox" id="f-hide-forbidden"> Masquer les releases des teams qui interdisent le réupload</label>
     <p class="small muted hidden" id="ign-line"><span id="ign-text"></span> <button type="button" class="linkish" id="ign-toggle"></button></p>
@@ -447,6 +448,7 @@
 <div class="actionbar hidden" id="pub-bar">
   <div class="sel" id="pub-bar-txt"></div>
   <p class="how">La fiche part sur V3X, puis la release est ajoutée à ton client, vérifiée et mise en seed.</p>
+  <button class="btn" id="pub-clear" title="Abandonne cette release, sans rien publier, et revient au choix d'une release">Effacer</button>
   <button class="btn hidden" id="pub-keep" title="Garde cette fiche : le Lot publiera la release avec elle, telle quelle">Garder pour le lot</button>
   <button class="btn primary" id="pub-go">Publier sur V3X</button>
 </div>
