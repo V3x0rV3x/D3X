@@ -102,6 +102,25 @@ async function api(path, body) {
   return data;
 }
 
+// Liens externes : la fenêtre de D3X est Edge ou Chrome en mode application,
+// avec un profil à part, et un lien s'y ouvrait dans ce navigateur-là plutôt
+// que dans celui du membre (AntoineAngel, 2/11/26). En local, D3X l'ouvre dans
+// le navigateur par défaut ; en mode serveur, le lien reste tel quel.
+document.addEventListener("click", (e) => {
+  if (!ui.state || !ui.state.openLinks || e.defaultPrevented || e.button !== 0) return;
+  const a = e.target instanceof Element ? e.target.closest("a[href]") : null;
+  if (!a) return;
+  let u;
+  try {
+    u = new URL(a.href, location.href);
+  } catch {
+    return;
+  }
+  if ((u.protocol !== "http:" && u.protocol !== "https:") || u.origin === location.origin) return;
+  e.preventDefault();
+  api("/ui/open", { url: u.href }).catch(() => window.open(u.href, "_blank", "noopener"));
+});
+
 // ---------- apparence (comme sur le site) ----------
 
 const ACCENTS = [

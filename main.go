@@ -178,6 +178,9 @@ func run(port int, window bool) error {
 	_ = config.WriteFileAtomic("session", []byte(strconv.Itoa(port)+" "+token))
 
 	srv := server.New(version, cfg, token, port)
+	// Liens externes de la page : dans le navigateur par défaut, pas dans la
+	// fenêtre d'application de D3X.
+	srv.SetOpener(desktop.OpenDefault)
 	if pub, err := update.PublicKey(signingKey); err == nil {
 		srv.SetUpdateKey(pub)
 	}

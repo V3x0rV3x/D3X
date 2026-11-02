@@ -79,6 +79,7 @@ Dans Réglages ▸ Surveillance, D3X relance l'analyse à intervalle régulier :
 - **Ajout automatique**, si tu le coches : seulement les nouvelles releases identiques (mêmes fichiers, mêmes noms), jamais les « noms différents », avec la règle habituelle (à l'arrêt, vérifiées, démarrées à 100 %). Le premier passage ne fait que noter l'existant : ce qui était déjà là s'ajoute à la main.
 - Fenêtre fermée, D3X reste dans la zone de notification. Sous Windows, il peut aussi se lancer avec la session, sans ouvrir sa fenêtre.
 - Sous Windows, la fenêtre de D3X s'épingle dans la barre des tâches avec l'icône de D3X, et l'épingle relance D3X. Une épingle faite avant la 1.1.21 garde l'icône d'Edge : retire-la et épingle de nouveau.
+- Depuis la 1.1.49, un lien cliqué dans la fenêtre de D3X (une fiche V3X, TMDB, VirusTotal…) s'ouvre dans ton navigateur habituel, et non plus dans l'Edge ou le Chrome qui sert de fenêtre à D3X. En mode serveur (Docker), rien ne change : les liens s'ouvrent dans le navigateur qui affiche la page.
 
 ## La médiathèque
 

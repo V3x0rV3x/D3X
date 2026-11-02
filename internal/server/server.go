@@ -108,6 +108,8 @@ type Server struct {
 	pubCtxAt time.Time
 	bbCSS    []byte // feuille de style BBCode du site (gardée 1 h)
 	bbCSSAt  time.Time
+
+	opener func(string) error // ouvre un lien dans le navigateur par défaut (local seulement)
 }
 
 // NewToken tire un jeton de session.
@@ -156,6 +158,7 @@ func NewWith(version string, cfg *config.Config, token string, port int, opts Op
 	s.mux.HandleFunc("GET /auth", s.auth)
 	s.mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("D3X")) })
 	s.mux.HandleFunc("GET /ui/state", s.state)
+	s.mux.HandleFunc("POST /ui/open", s.openLink)
 	s.mux.HandleFunc("POST /ui/settings", s.settings)
 	s.mux.HandleFunc("POST /ui/reconnect", s.reconnect)
 	s.mux.HandleFunc("POST /ui/scan", s.scan)
@@ -360,11 +363,14 @@ func (s *Server) v3xRetryLoop() {
 }
 
 type stateOut struct {
-	Version string  `json:"version"`
-	Boot    string  `json:"boot"`           // ce lancement de D3X (démarrage d'un lot)
-	Mode    string  `json:"mode,omitempty"` // server (page jointe par le réseau), docker
-	Update  *Update `json:"update,omitempty"`
-	V3X     struct {
+	Version string `json:"version"`
+	Boot    string `json:"boot"`           // ce lancement de D3X (démarrage d'un lot)
+	Mode    string `json:"mode,omitempty"` // server (page jointe par le réseau), docker
+	// OpenLinks : les liens externes passent par D3X pour s'ouvrir dans le
+	// navigateur par défaut (local seulement, voir openLink).
+	OpenLinks bool    `json:"openLinks,omitempty"`
+	Update    *Update `json:"update,omitempty"`
+	V3X       struct {
 		Configured bool     `json:"configured"`
 		OK         bool     `json:"ok"`
 		Error      string   `json:"error,omitempty"`
@@ -444,6 +450,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 			o.Mode = "docker"
 		}
 	}
+	o.OpenLinks = s.opener != nil && !s.opts.Remote
 	if c := s.cfg.SSH; c != nil {
 		o.SSH.Configured, o.SSH.Label, o.SSH.Host, o.SSH.Port, o.SSH.User, o.SSH.KeyPath = true, c.Label(), c.Host, c.Port, c.User, c.KeyPath
 		o.SSH.OK, o.SSH.System, o.SSH.Error = s.ssh != nil, s.sshSys, s.sshErr
