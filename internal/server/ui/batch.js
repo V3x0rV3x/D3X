@@ -45,7 +45,10 @@ function lotEntries(list, hits) {
   return list.map((e) => {
     const st = e.error ? "error" : (e.last && LOT_STATE_OF_KIND[e.last.kind]) || "pending";
     const detail = e.error || (e.last && e.last.detail) || "";
-    return { ...e, state: st, detail: e.skipped ? skipDetail(e.tags) : detail, checked: !e.skipped && (st === "pending" || st === "ready" || st === "review" || st === "simulated"), requests: (hits && hits[e.path]) || null };
+    // Écartée par une étiquette : la raison remplace le détail d'une release que
+    // le lot aurait prise ; une release déjà publiée (ou présente) garde le sien.
+    const takable = st === "pending" || st === "ready" || st === "review" || st === "simulated";
+    return { ...e, state: st, detail: e.skipped && takable ? skipDetail(e.tags) : detail, checked: !e.skipped && takable, requests: (hits && hits[e.path]) || null };
   });
 }
 

@@ -116,8 +116,13 @@ func (e *Engine) Start(spec Spec) (*Run, error) {
 		// Étiquette à ne jamais publier : la release garde son état, grisée,
 		// et le lot ne la prend pas (todo). Rien au journal : ce n'est pas une
 		// décision du membre, l'étiquette retirée dans le client la rend au lot.
+		// La raison remplace le détail d'une release que le lot aurait prise ;
+		// une release déjà publiée (ou présente, ignorée, illisible) garde le sien.
 		if bad := SkippedBy(en.Tags, skip); bad != "" {
-			en.Skipped, en.Detail = true, skipDetail(bad)
+			en.Skipped = true
+			if takable(en.State) {
+				en.Detail = skipDetail(bad)
+			}
 		}
 		r.Entries = append(r.Entries, en)
 	}
@@ -143,11 +148,11 @@ func (e *Engine) Start(spec Spec) (*Run, error) {
 // todo : la release est à traiter (comme la page : cochée et dans un état
 // qui le permet ; ici, cochée = envoyée par la page). Jamais une release
 // écartée par une étiquette de son torrent.
-func todo(en *Entry) bool {
-	if en.Skipped {
-		return false
-	}
-	switch en.State {
+func todo(en *Entry) bool { return !en.Skipped && takable(en.State) }
+
+// takable : un état dans lequel un lot prend la release.
+func takable(state string) bool {
+	switch state {
 	case "pending", "ready", "review", "simulated":
 		return true
 	}

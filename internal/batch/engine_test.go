@@ -424,14 +424,15 @@ func TestEngineSkipTags(t *testing.T) {
 			{Name: "NoHL", Path: "/r/NoHL", Video: true, Size: 10},
 			{Name: "Libre", Path: "/r/Libre", Exec: true, Size: 10},
 			{Name: "Deja", Path: "/r/Deja", Video: true, Size: 10},
+			{Name: "Publiee", Path: "/r/Publiee", Video: true, Size: 10},
 		},
-		last:     map[string]journal.Event{"/r/Deja": {Kind: "batch_review", Detail: "catégorie à choisir"}},
-		tags:     map[string][]string{"/r/NoHL": {"cross-seed", "NOHL", "V3X"}, "/r/Libre": {"V3X"}, "/r/Deja": {"Inactive", "LastSeed"}},
+		last:     map[string]journal.Event{"/r/Deja": {Kind: "batch_review", Detail: "catégorie à choisir"}, "/r/Publiee": {Kind: "published", Detail: "publiée · Films ▸ Film"}},
+		tags:     map[string][]string{"/r/NoHL": {"cross-seed", "NOHL", "V3X"}, "/r/Libre": {"V3X"}, "/r/Deja": {"Inactive", "LastSeed"}, "/r/Publiee": {"noHL"}},
 		tagsWarn: "Étiquettes non lues : Seedbox injoignable",
 		skipTags: map[string]bool{"nohl": true, "lastseed": true, "inactive": true},
 	}
 	e := New(d)
-	r, err := e.Start(Spec{Dir: "/r", Source: "local", Paths: []string{"/r/NoHL", "/r/Libre", "/r/Deja"}, Options: Options{Sim: true}})
+	r, err := e.Start(Spec{Dir: "/r", Source: "local", Paths: []string{"/r/NoHL", "/r/Libre", "/r/Deja", "/r/Publiee"}, Options: Options{Sim: true}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -439,7 +440,7 @@ func TestEngineSkipTags(t *testing.T) {
 		t.Fatalf("démarrage : total %d, avertissement %q", r.Total, r.TagsWarn)
 	}
 	// Les chemins des releases listées, pas ceux envoyés par la page.
-	if strings.Join(d.tagsAsk, " ") != "/r/NoHL /r/Libre /r/Deja" {
+	if strings.Join(d.tagsAsk, " ") != "/r/NoHL /r/Libre /r/Deja /r/Publiee" {
 		t.Fatalf("chemins demandés à Tags : %q", d.tagsAsk)
 	}
 	r = waitDone(t, e)
@@ -449,6 +450,10 @@ func TestEngineSkipTags(t *testing.T) {
 	// Déjà « à vérifier » au journal : l'état reste, le détail dit les étiquettes.
 	if en := entryByPath(r, "/r/Deja"); en == nil || !en.Skipped || en.State != "review" || en.Detail != "étiquettes Inactive, LastSeed dans ton client : jamais publiée par un lot" {
 		t.Errorf("déjà au journal : %+v", en)
+	}
+	// Déjà publiée : grisée aussi, mais son détail (la publication) reste.
+	if en := entryByPath(r, "/r/Publiee"); en == nil || !en.Skipped || en.State != "published" || en.Detail != "publiée · Films ▸ Film" {
+		t.Errorf("publiée : %+v", en)
 	}
 	if en := entryByPath(r, "/r/Libre"); en == nil || en.Skipped || en.State != "review" || len(en.Tags) != 1 || !strings.Contains(en.Detail, "exécutable") {
 		t.Errorf("libre : %+v (traitée comme d'habitude)", en)
