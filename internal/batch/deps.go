@@ -20,6 +20,12 @@ type Deps interface {
 	Exclude() []string
 	Entries(ctx context.Context, src source.Source, paths []string) ([]releases.Entry, error)
 	LastByPath() map[string]journal.Event
+	// Tags : les étiquettes des torrents qui couvrent chaque chemin, dans tous
+	// les clients ; warn nomme un client qui n'a pas répondu (ses étiquettes
+	// manquent), vide sinon.
+	Tags(ctx context.Context, paths []string) (tags map[string][]string, warn string)
+	// SkipTags : les étiquettes à ne jamais publier, en minuscules (Réglages ▸ Ajouts).
+	SkipTags() map[string]bool
 
 	// Publication (publish.Manager).
 	PubStart(src source.Source, path string) (*publish.Job, error)

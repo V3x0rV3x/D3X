@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -27,6 +28,9 @@ type fakeDeps struct {
 	holds    []time.Duration
 	linksSet map[string]bool
 	linksErr error
+	tags     map[string][]string
+	tagsWarn string
+	skipTags map[string]bool
 
 	pubStart   func(path string) (*publish.Job, error)
 	pubGet     func(id string) (*publish.Job, bool)
@@ -55,6 +59,10 @@ func (d *fakeDeps) PubSetLinks(id string, on bool) error {
 	d.linksSet[id] = on
 	return d.linksErr
 }
+func (d *fakeDeps) Tags(_ context.Context, paths []string) (map[string][]string, string) {
+	return d.tags, d.tagsWarn
+}
+func (d *fakeDeps) SkipTags() map[string]bool { return d.skipTags }
 
 func (d *fakeDeps) Source(id string) (source.Source, error) { return source.Local{}, nil }
 func (d *fakeDeps) Exclude() []string                       { return nil }
@@ -399,5 +407,45 @@ func TestEngineSeedLater(t *testing.T) {
 	defer d.mu.Unlock()
 	if len(d.holds) < 2 || d.holds[0] != 5*time.Minute || d.holds[len(d.holds)-1] != 0 {
 		t.Fatalf("bail : %v", d.holds)
+	}
+}
+
+// Une release couverte par un torrent dont l'étiquette est à ne jamais publier
+// (noHL) reste dans son état, hors du total, jamais traitée, même envoyée par
+// la page ; la casse ne compte pas ; une étiquette d'un autre torrent sans
+// l'étiquette n'y change rien ; rien au journal ; un client muet est dit.
+func TestEngineSkipTags(t *testing.T) {
+	d := &fakeDeps{
+		entries: []releases.Entry{
+			{Name: "NoHL", Path: "/r/NoHL", Video: true, Size: 10},
+			{Name: "Libre", Path: "/r/Libre", Exec: true, Size: 10},
+			{Name: "Deja", Path: "/r/Deja", Video: true, Size: 10},
+		},
+		last:     map[string]journal.Event{"/r/Deja": {Kind: "batch_review", Detail: "catégorie à choisir"}},
+		tags:     map[string][]string{"/r/NoHL": {"cross-seed", "NOHL", "V3X"}, "/r/Libre": {"V3X"}, "/r/Deja": {"Inactive", "LastSeed"}},
+		tagsWarn: "Étiquettes non lues : Seedbox injoignable",
+		skipTags: map[string]bool{"nohl": true, "lastseed": true, "inactive": true},
+	}
+	e := New(d)
+	r, err := e.Start(Spec{Dir: "/r", Source: "local", Paths: []string{"/r/NoHL", "/r/Libre", "/r/Deja"}, Options: Options{Sim: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Total != 1 || r.TagsWarn != d.tagsWarn {
+		t.Fatalf("démarrage : total %d, avertissement %q", r.Total, r.TagsWarn)
+	}
+	r = waitDone(t, e)
+	if en := entryByPath(r, "/r/NoHL"); en == nil || !en.Skipped || en.State != "pending" || en.Detail != "étiquette NOHL dans ton client : jamais publiée par un lot" || len(en.Tags) != 3 {
+		t.Errorf("noHL : %+v", en)
+	}
+	// Déjà « à vérifier » au journal : l'état reste, le détail dit les étiquettes.
+	if en := entryByPath(r, "/r/Deja"); en == nil || !en.Skipped || en.State != "review" || en.Detail != "étiquettes Inactive, LastSeed dans ton client : jamais publiée par un lot" {
+		t.Errorf("déjà au journal : %+v", en)
+	}
+	if en := entryByPath(r, "/r/Libre"); en == nil || en.Skipped || en.State != "review" || len(en.Tags) != 1 || !strings.Contains(en.Detail, "exécutable") {
+		t.Errorf("libre : %+v (traitée comme d'habitude)", en)
+	}
+	if k := d.kinds(); k["/r/NoHL"] != "" || k["/r/Deja"] != "" || k["/r/Libre"] != "batch_review" {
+		t.Errorf("journal : %v (rien pour une écartée)", k)
 	}
 }

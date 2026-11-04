@@ -89,9 +89,17 @@ func (e *Engine) Start(spec Spec) (*Run, error) {
 		return nil, err
 	}
 	last := e.deps.LastByPath()
-	r := &Run{Dir: spec.Dir, Source: spec.Source, Options: spec.Options, State: StRunning, StartedAt: time.Now()}
+	paths := make([]string, len(list))
+	for i, x := range list {
+		paths[i] = x.Path
+	}
+	// Les étiquettes des torrents qui couvrent chaque release, relues ici
+	// quoi qu'ait vu la page : une écartée envoyée quand même est retenue.
+	tags, warn := e.deps.Tags(ctx, paths)
+	skip := e.deps.SkipTags()
+	r := &Run{Dir: spec.Dir, Source: spec.Source, Options: spec.Options, State: StRunning, StartedAt: time.Now(), TagsWarn: warn}
 	for _, x := range list {
-		en := &Entry{Entry: x, State: "pending"}
+		en := &Entry{Entry: x, State: "pending", Tags: tags[x.Path]}
 		if ev, ok := last[src.Key(x.Path)]; ok {
 			ev := ev
 			en.Last = &ev
@@ -101,6 +109,12 @@ func (e *Engine) Start(spec Spec) (*Run, error) {
 		}
 		if x.Error != "" {
 			en.State, en.Detail = "error", x.Error
+		}
+		// Étiquette à ne jamais publier : la release garde son état, grisée,
+		// et le lot ne la prend pas (todo). Rien au journal : ce n'est pas une
+		// décision du membre, l'étiquette retirée dans le client la rend au lot.
+		if bad := SkippedBy(en.Tags, skip); bad != "" {
+			en.Skipped, en.Detail = true, skipDetail(bad)
 		}
 		r.Entries = append(r.Entries, en)
 	}
@@ -124,8 +138,12 @@ func (e *Engine) Start(spec Spec) (*Run, error) {
 }
 
 // todo : la release est à traiter (comme la page : cochée et dans un état
-// qui le permet ; ici, cochée = envoyée par la page).
+// qui le permet ; ici, cochée = envoyée par la page). Jamais une release
+// écartée par une étiquette de son torrent.
 func todo(en *Entry) bool {
+	if en.Skipped {
+		return false
+	}
 	switch en.State {
 	case "pending", "ready", "review", "simulated":
 		return true
