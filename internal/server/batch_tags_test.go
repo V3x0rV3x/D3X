@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/V3x0rV3x/D3X/internal/config"
@@ -39,6 +40,8 @@ func TestLotSkipTags(t *testing.T) {
 	})
 	cfg := config.Defaults()
 	cfg.Clients = []config.ClientConfig{{ID: "c1", URL: qs.URL, User: "admin", Pass: "demo", PathMap: []pathmap.Rule{{From: parent, To: "/data"}}}}
+	// Un second client injoignable : signalé, sans cacher les étiquettes du premier.
+	cfg.Clients = append(cfg.Clients, config.ClientConfig{ID: "c2", Name: "Seedbox", URL: "http://127.0.0.1:1", User: "x", Pass: "y"})
 	s := NewWith("test", cfg, "jeton-de-test-0123456789abcdef", 8733, Options{})
 	s.connect()
 
@@ -51,8 +54,11 @@ func TestLotSkipTags(t *testing.T) {
 	}
 
 	code, out, body := call(t, s, "GET", "/ui/batch/list?source=local&path="+url.QueryEscape(parent), nil)
-	if code != http.StatusOK || out["tagged"] != true || out["tagsWarn"] != "" || fmt.Sprint(out["skipTags"]) != "[nohl LastSeed]" {
+	if code != http.StatusOK || out["tagged"] != true || fmt.Sprint(out["skipTags"]) != "[nohl LastSeed]" {
 		t.Fatalf("%d %s", code, body)
+	}
+	if warn, _ := out["tagsWarn"].(string); warn == "" || !strings.Contains(warn, "Étiquettes non lues") || !strings.Contains(warn, "Seedbox") {
+		t.Fatalf("client injoignable non signalé : %q", out["tagsWarn"])
 	}
 	got := map[string]map[string]interface{}{}
 	for _, x := range out["entries"].([]interface{}) {

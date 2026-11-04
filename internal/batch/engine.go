@@ -94,8 +94,11 @@ func (e *Engine) Start(spec Spec) (*Run, error) {
 		paths[i] = x.Path
 	}
 	// Les étiquettes des torrents qui couvrent chaque release, relues ici
-	// quoi qu'ait vu la page : une écartée envoyée quand même est retenue.
-	tags, warn := e.deps.Tags(ctx, src, paths)
+	// quoi qu'ait vu la page : une écartée envoyée quand même est retenue. Un
+	// délai à part : la liste du dossier (SSH) a pu prendre le sien.
+	tctx, tcancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	tags, warn := e.deps.Tags(tctx, src, paths)
+	tcancel()
 	skip := e.deps.SkipTags()
 	r := &Run{Dir: spec.Dir, Source: spec.Source, Options: spec.Options, State: StRunning, StartedAt: time.Now(), TagsWarn: warn}
 	for _, x := range list {

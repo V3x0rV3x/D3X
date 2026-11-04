@@ -30,10 +30,11 @@ type batchEntry struct {
 	Skipped bool     `json:"skipped,omitempty"`
 }
 
-// clientLists : la liste de chaque client, tous en même temps (3 min au plus
-// chacun, comme le cross-seed) ; warn nomme ceux qui n'ont pas répondu (leurs
-// étiquettes manquent) ; tagged : au moins un client est réglé (sans client,
-// la page n'a pas de colonne « Étiquettes » à montrer). V3X n'est pas requis.
+// clientLists : la liste de chaque client, tous en même temps (au plus le
+// délai du contexte, et celui du client : 2 min pour qBittorrent) ; warn nomme
+// ceux qui n'ont pas répondu (leurs étiquettes manquent) ; tagged : au moins
+// un client est réglé (sans client, la page n'a pas de colonne « Étiquettes »
+// à montrer). V3X n'est pas requis.
 func (s *Server) clientLists(ctx context.Context) (lists []crossseed.Listed, warn string, tagged bool) {
 	targets, down := s.targets()
 	if len(targets) == 0 && len(down) == 0 {
@@ -62,9 +63,14 @@ func (s *Server) lotEntries(ctx context.Context, src source.Source, list func() 
 		warn   string
 		tagged bool
 	}
+	// Les clients, pendant la lecture du dossier ; 45 s au plus : un client qui
+	// ne répond pas est dit (« Étiquettes non lues »), la page n'attend pas, et
+	// le démarrage du lot relit les étiquettes avec son propre délai.
+	lctx, lcancel := context.WithTimeout(ctx, 45*time.Second)
+	defer lcancel()
 	cc := make(chan clients, 1)
 	go func() {
-		l, w, tg := s.clientLists(ctx)
+		l, w, tg := s.clientLists(lctx)
 		cc <- clients{l, w, tg}
 	}()
 	entries, err := list()
