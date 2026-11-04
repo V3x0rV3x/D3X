@@ -31,6 +31,7 @@ type fakeDeps struct {
 	tags     map[string][]string
 	tagsWarn string
 	skipTags map[string]bool
+	tagsAsk  []string // les chemins demandés à Tags
 
 	pubStart   func(path string) (*publish.Job, error)
 	pubGet     func(id string) (*publish.Job, bool)
@@ -60,6 +61,9 @@ func (d *fakeDeps) PubSetLinks(id string, on bool) error {
 	return d.linksErr
 }
 func (d *fakeDeps) Tags(_ context.Context, paths []string) (map[string][]string, string) {
+	d.mu.Lock()
+	d.tagsAsk = append([]string(nil), paths...)
+	d.mu.Unlock()
 	return d.tags, d.tagsWarn
 }
 func (d *fakeDeps) SkipTags() map[string]bool { return d.skipTags }
@@ -433,6 +437,10 @@ func TestEngineSkipTags(t *testing.T) {
 	}
 	if r.Total != 1 || r.TagsWarn != d.tagsWarn {
 		t.Fatalf("démarrage : total %d, avertissement %q", r.Total, r.TagsWarn)
+	}
+	// Les chemins des releases listées, pas ceux envoyés par la page.
+	if strings.Join(d.tagsAsk, " ") != "/r/NoHL /r/Libre /r/Deja" {
+		t.Fatalf("chemins demandés à Tags : %q", d.tagsAsk)
 	}
 	r = waitDone(t, e)
 	if en := entryByPath(r, "/r/NoHL"); en == nil || !en.Skipped || en.State != "pending" || en.Detail != "étiquette NOHL dans ton client : jamais publiée par un lot" || len(en.Tags) != 3 {
