@@ -31,7 +31,7 @@ type batchEntry struct {
 }
 
 // clientLists : la liste de chaque client, tous en même temps (au plus le
-// délai du contexte, et celui du client : 2 min pour qBittorrent) ; warn nomme
+// délai du contexte, et celui de ListAll : 3 min par client) ; warn nomme
 // ceux qui n'ont pas répondu (leurs étiquettes manquent) ; tagged : au moins
 // un client est réglé (sans client, la page n'a pas de colonne « Étiquettes »
 // à montrer). V3X n'est pas requis.

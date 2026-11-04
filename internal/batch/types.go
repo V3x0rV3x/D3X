@@ -113,17 +113,16 @@ type Entry struct {
 
 // Run : un lot, en cours ou fini.
 type Run struct {
-	Dir     string   `json:"dir"`
-	Source  string   `json:"source"`
-	Options Options  `json:"options"`
-	Entries []*Entry `json:"entries"`
-	State   string   `json:"state"`
-	Stopped bool     `json:"stopped"`
-	Current string   `json:"current,omitempty"`
-	Label   string   `json:"label"`  // « Lot : 3 / 12 »
-	Detail  string   `json:"detail"` // « hachage 42 % », « ton client vérifie X »
-	// TagsWarn : un client n'a pas répondu au démarrage, ses étiquettes manquent.
-	TagsWarn       string    `json:"tagsWarn,omitempty"`
+	Dir            string    `json:"dir"`
+	Source         string    `json:"source"`
+	Options        Options   `json:"options"`
+	Entries        []*Entry  `json:"entries"`
+	State          string    `json:"state"`
+	Stopped        bool      `json:"stopped"`
+	Current        string    `json:"current,omitempty"`
+	Label          string    `json:"label"`              // « Lot : 3 / 12 »
+	Detail         string    `json:"detail"`             // « hachage 42 % », « ton client vérifie X »
+	TagsWarn       string    `json:"tagsWarn,omitempty"` // un client n'a pas répondu au démarrage : ses étiquettes manquent
 	Done           int       `json:"done"`
 	Total          int       `json:"total"`
 	Published      int       `json:"published"`
@@ -267,7 +266,7 @@ func SkippedBy(tags []string, skip map[string]bool) string {
 // skipDetail : la raison affichée pour une release écartée par ses étiquettes.
 func skipDetail(bad string) string {
 	word := "étiquette"
-	if strings.Contains(bad, ",") {
+	if strings.Contains(bad, ", ") {
 		word = "étiquettes"
 	}
 	return word + " " + bad + " dans ton client : jamais publiée par un lot"

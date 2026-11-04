@@ -270,7 +270,7 @@ async function lotReset() {
 
 function lotRow(e) {
   const tr = el("tr", ((e.path === lot.current ? "current" : "") + (e.skipped ? " skipped" : "")).trim());
-  if (e.skipped) tr.title = e.detail;
+  if (e.skipped) tr.title = skipDetail(e.tags); // même déjà publiée : l'infobulle dit pourquoi la ligne est grisée
   const td = el("td", "c-check");
   if (e.state !== "published" && e.state !== "duplicate" && e.state !== "error") {
     const cb = el("input");
