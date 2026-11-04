@@ -182,7 +182,7 @@ func TestDeluge(t *testing.T) {
 			reply(nil, "Unknown method")
 		case "core.get_torrents_status":
 			reply(map[string]interface{}{hash: map[string]interface{}{"name": "Release.Test", "save_path": "/dl", "total_size": 1000, "total_wanted": 1000,
-				"progress": 100.0, "state": "Paused", "trackers": []map[string]string{{"url": "https://autre.invalid/a"}},
+				"progress": 100.0, "state": "Paused", "label": "nohl", "trackers": []map[string]string{{"url": "https://autre.invalid/a"}},
 				"files": []map[string]interface{}{{"path": "Release.Test/a.mkv", "size": 1000}}}}, "")
 		case "core.add_torrent_file":
 			addOpts = req.Params[2].(map[string]interface{})
@@ -213,6 +213,11 @@ func TestDeluge(t *testing.T) {
 	list, err := c.List(ctx, []string{hash})
 	if err != nil || len(list) != 1 || list[0].ContentPath != "/dl/Release.Test" || list[0].Progress != 1 || list[0].Checking {
 		t.Fatalf("liste : %+v %v", list, err)
+	}
+	// Plugin Label : une seule étiquette par torrent ; sans le plugin, la clé
+	// manque et le torrent n'en a aucune.
+	if len(list[0].Tags) != 1 || list[0].Tags[0] != "nohl" {
+		t.Fatalf("étiquette : %q", list[0].Tags)
 	}
 	files, total, err := c.Files(ctx, hash)
 	if err != nil || total != 1000 || files[0].Path != "Release.Test/a.mkv" {
