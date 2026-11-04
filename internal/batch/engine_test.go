@@ -60,7 +60,7 @@ func (d *fakeDeps) PubSetLinks(id string, on bool) error {
 	d.linksSet[id] = on
 	return d.linksErr
 }
-func (d *fakeDeps) Tags(_ context.Context, paths []string) (map[string][]string, string) {
+func (d *fakeDeps) Tags(_ context.Context, _ source.Source, paths []string) (map[string][]string, string) {
 	d.mu.Lock()
 	d.tagsAsk = append([]string(nil), paths...)
 	d.mu.Unlock()

@@ -9,9 +9,11 @@ import (
 	"time"
 
 	"github.com/V3x0rV3x/D3X/internal/batch"
+	"github.com/V3x0rV3x/D3X/internal/crossseed"
 	"github.com/V3x0rV3x/D3X/internal/journal"
 	"github.com/V3x0rV3x/D3X/internal/mediainfo"
 	"github.com/V3x0rV3x/D3X/internal/releases"
+	"github.com/V3x0rV3x/D3X/internal/source"
 )
 
 // Mode lot : chaque entrée d'un dossier (sous-dossier ou fichier) est une
@@ -22,6 +24,75 @@ import (
 type batchEntry struct {
 	releases.Entry
 	Last *journal.Event `json:"last,omitempty"` // dernière décision ou publication
+	// Tags : les étiquettes des torrents du client qui couvrent la release ;
+	// Skipped : l'une d'elles est à ne jamais publier (Réglages ▸ Ajouts).
+	Tags    []string `json:"tags,omitempty"`
+	Skipped bool     `json:"skipped,omitempty"`
+}
+
+// clientLists : la liste de chaque client, tous en même temps (3 min au plus
+// chacun, comme le cross-seed) ; warn nomme ceux qui n'ont pas répondu (leurs
+// étiquettes manquent) ; tagged : au moins un client est réglé (sans client,
+// la page n'a pas de colonne « Étiquettes » à montrer). V3X n'est pas requis.
+func (s *Server) clientLists(ctx context.Context) (lists []crossseed.Listed, warn string, tagged bool) {
+	targets, down := s.targets()
+	if len(targets) == 0 && len(down) == 0 {
+		return nil, "", false
+	}
+	lists, down = crossseed.ListAll(ctx, &crossseed.Env{Targets: targets, Down: down})
+	if len(down) > 0 {
+		warn = "Étiquettes non lues : " + crossseed.DownText(down)
+	}
+	return lists, warn, true
+}
+
+// lotTags : les étiquettes des torrents qui couvrent chaque chemin, la
+// correspondance de dossiers devinée pour les clients sans règle (comme Publier).
+func lotTags(src source.Source, paths []string, lists []crossseed.Listed) map[string][]string {
+	return crossseed.TagsOf(paths, crossseed.GuessRules(lists, paths, src.Dir))
+}
+
+// lotEntries : les releases pour la page, chacune avec sa dernière décision,
+// les étiquettes des torrents qui la couvrent et « écartée » si l'une est à ne
+// jamais publier. Les clients sont lus pendant la lecture du dossier (list),
+// qui peut prendre des minutes par SSH. Rend la réponse sans « path ».
+func (s *Server) lotEntries(ctx context.Context, src source.Source, list func() ([]releases.Entry, error)) (map[string]interface{}, error) {
+	type clients struct {
+		lists  []crossseed.Listed
+		warn   string
+		tagged bool
+	}
+	cc := make(chan clients, 1)
+	go func() {
+		l, w, tg := s.clientLists(ctx)
+		cc <- clients{l, w, tg}
+	}()
+	entries, err := list()
+	if err != nil {
+		return nil, err
+	}
+	c := <-cc
+	paths := make([]string, len(entries))
+	for i, e := range entries {
+		paths[i] = e.Path
+	}
+	tags := lotTags(src, paths, c.lists)
+	s.mu.Lock()
+	skip := s.cfg.SkipTagSet()
+	skipList := append([]string{}, s.cfg.SkipTags...)
+	s.mu.Unlock()
+	last := journal.LastByPath()
+	out := make([]batchEntry, 0, len(entries))
+	for _, e := range entries {
+		be := batchEntry{Entry: e, Tags: tags[e.Path]}
+		be.Skipped = batch.SkippedBy(be.Tags, skip) != ""
+		if ev, ok := last[src.Key(e.Path)]; ok {
+			ev := ev
+			be.Last = &ev
+		}
+		out = append(out, be)
+	}
+	return map[string]interface{}{"entries": out, "skipTags": skipList, "tagged": c.tagged, "tagsWarn": c.warn}, nil
 }
 
 func (s *Server) routesBatch() {
@@ -146,22 +217,13 @@ func (s *Server) batchList(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
-	list, err := src.List(ctx, dir, exclude)
+	out, err := s.lotEntries(ctx, src, func() ([]releases.Entry, error) { return src.List(ctx, dir, exclude) })
 	if err != nil {
 		fail(w, http.StatusBadRequest, err)
 		return
 	}
-	last := journal.LastByPath()
-	out := make([]batchEntry, 0, len(list))
-	for _, e := range list {
-		be := batchEntry{Entry: e}
-		if ev, ok := last[src.Key(e.Path)]; ok {
-			ev := ev
-			be.Last = &ev
-		}
-		out = append(out, be)
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"path": dir, "entries": out})
+	out["path"] = dir
+	writeJSON(w, http.StatusOK, out)
 }
 
 // batchDecision garde la décision du lot pour une release (à revoir, simulée,

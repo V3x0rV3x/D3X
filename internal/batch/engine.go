@@ -95,7 +95,7 @@ func (e *Engine) Start(spec Spec) (*Run, error) {
 	}
 	// Les étiquettes des torrents qui couvrent chaque release, relues ici
 	// quoi qu'ait vu la page : une écartée envoyée quand même est retenue.
-	tags, warn := e.deps.Tags(ctx, paths)
+	tags, warn := e.deps.Tags(ctx, src, paths)
 	skip := e.deps.SkipTags()
 	r := &Run{Dir: spec.Dir, Source: spec.Source, Options: spec.Options, State: StRunning, StartedAt: time.Now(), TagsWarn: warn}
 	for _, x := range list {
