@@ -592,6 +592,9 @@
         <div><label for="f-pubtag">Étiquette de tes publications</label><input id="f-pubtag" type="text" autocomplete="off" placeholder="la même"></div>
       </div>
       <p class="hint">Pour ranger à part ce que tu publies avec Publier et le Lot. Vide : la catégorie ou l'étiquette ci-dessus.</p>
+      <label for="f-skiptags">Étiquettes à ne jamais publier</label>
+      <input id="f-skiptags" type="text" autocomplete="off" spellcheck="false" placeholder="aucune">
+      <p class="hint">Une release dont un torrent de ton client porte l'une de ces étiquettes (<code>noHL</code>, par exemple) n'est jamais publiée par le Lot, même si d'autres torrents sans étiquette seedent les mêmes fichiers. Plusieurs : sépare-les par des virgules.</p>
       <label for="f-hashlimit">Vitesse de lecture des fichiers (Mo/s)</label>
       <input id="f-hashlimit" type="number" min="0" max="10000" step="1" inputmode="numeric" placeholder="sans limite">
       <p class="hint">Pour fabriquer le .torrent (Publier, Lot) et vérifier la Médiathèque, sur les fichiers de ce PC. Vide : aussi vite que possible. Si tes fichiers sont sur un NAS par le réseau, la lecture peut prendre tout le débit de ta carte et couper le reste (internet compris) pendant le hachage : 50 laisse plus de la moitié d'un réseau à 1 Gbit/s.</p>
