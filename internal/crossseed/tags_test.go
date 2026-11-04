@@ -21,6 +21,7 @@ func TestTagsOf(t *testing.T) {
 		{ContentPath: "/data/Collection/Deux.2002", Tags: []string{"Inactive"}},
 		{ContentPath: "", Tags: []string{"fantome"}}, // sans chemin : ignoré
 		{ContentPath: "/data/Sans.Etiquette"},
+		{ContentPath: "/data/Trailing/", Tags: []string{"noHL"}},
 		{ContentPath: "/data/Film.2020.REPACK", Tags: []string{"autre"}}, // même début de nom, autre dossier
 		{ContentPath: `D:\Films\Vieux.Film`, Tags: []string{"noHL"}},     // Windows : sans la casse
 	}}
@@ -28,7 +29,7 @@ func TestTagsOf(t *testing.T) {
 		{ContentPath: "/home/box/dl/Album.FLAC", Tags: []string{"noHL"}},
 		{ContentPath: "/home/box/dl/Film.2020", Tags: []string{"TR4KER"}}, // pas le même Film.2020 : autre machine
 	}}
-	paths := []string{"/data/Film.2020", "/data/Serie.S01", "/data/Collection", "/data/Sans.Etiquette", "/data/Absente", `Z:\Torrents\Album.FLAC`, `d:\films\vieux.film`}
+	paths := []string{"/data/Film.2020", "/data/Serie.S01", "/data/Collection", "/data/Sans.Etiquette", "/data/Absente", `Z:\Torrents\Album.FLAC`, `d:\films\vieux.film`, "/data/Trailing", ""}
 	got := TagsOf(paths, []Listed{pc, box})
 	want := map[string][]string{
 		"/data/Film.2020":        {"cross-seed", "noHL", "V3X"}, // v3x et V3X : une seule, la première vue
@@ -36,6 +37,7 @@ func TestTagsOf(t *testing.T) {
 		"/data/Collection":       {"Inactive", "noHL"},
 		`Z:\Torrents\Album.FLAC`: {"noHL"}, // par la correspondance de dossiers de la seedbox
 		`d:\films\vieux.film`:    {"noHL"},
+		"/data/Trailing":         {"noHL"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("TagsOf :\n%v\nattendu\n%v", got, want)
