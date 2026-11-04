@@ -117,7 +117,8 @@ type trTorrent struct {
 	Trackers    []struct {
 		Announce string `json:"announce"`
 	} `json:"trackers"`
-	Files []struct {
+	Labels []string `json:"labels"`
+	Files  []struct {
 		Name   string `json:"name"`
 		Length int64  `json:"length"`
 	} `json:"files"`
@@ -136,7 +137,7 @@ func (t *transmission) get(ctx context.Context, hashes []string, fields []string
 }
 
 func (t *transmission) List(ctx context.Context, hashes []string) ([]Torrent, error) {
-	list, err := t.get(ctx, hashes, []string{"hashString", "name", "totalSize", "sizeWhenDone", "downloadDir", "percentDone", "status", "trackers"})
+	list, err := t.get(ctx, hashes, []string{"hashString", "name", "totalSize", "sizeWhenDone", "downloadDir", "percentDone", "status", "trackers", "labels"})
 	if err != nil {
 		return nil, err
 	}
@@ -154,6 +155,7 @@ func (t *transmission) List(ctx context.Context, hashes []string) ([]Torrent, er
 			Downloading: (x.Status == 3 || x.Status == 4) && x.PercentDone < 1,
 			Stopped:     x.Status == 0,
 			Trackers:    TrackerHosts(urls),
+			Tags:        tagList(x.Labels),
 		})
 	}
 	return out, nil

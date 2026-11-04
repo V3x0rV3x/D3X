@@ -38,6 +38,7 @@ func (q *qbitClient) List(ctx context.Context, hashes []string) ([]Torrent, erro
 			Size: t.Size, TotalSize: t.TotalSize, Progress: t.Progress,
 			Checking: t.Checking(), Downloading: t.Downloading(), Stopped: t.Stopped(), Trackers: t.TrackerHosts(),
 			Category: t.Category,
+			Tags:     tagList(strings.Split(t.Tags, ",")),
 		})
 	}
 	return out, nil

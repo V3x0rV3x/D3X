@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/V3x0rV3x/D3X/internal/crossseed"
-	"github.com/V3x0rV3x/D3X/internal/journal"
 	"github.com/V3x0rV3x/D3X/internal/names"
 	"github.com/V3x0rV3x/D3X/internal/pathmap"
+	"github.com/V3x0rV3x/D3X/internal/releases"
 	"github.com/V3x0rV3x/D3X/internal/source"
 	"github.com/V3x0rV3x/D3X/internal/v3x"
 )
@@ -285,22 +285,13 @@ func (s *Server) batchEntries(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
-	list, err := src.Entries(ctx, in.Paths, exclude)
+	out, err := s.lotEntries(ctx, src, func() ([]releases.Entry, error) { return src.Entries(ctx, in.Paths, exclude) })
 	if err != nil {
 		fail(w, http.StatusBadRequest, err)
 		return
 	}
-	last := journal.LastByPath()
-	out := make([]batchEntry, 0, len(list))
-	for _, e := range list {
-		be := batchEntry{Entry: e}
-		if ev, ok := last[src.Key(e.Path)]; ok {
-			ev := ev
-			be.Last = &ev
-		}
-		out = append(out, be)
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"path": "", "entries": out})
+	out["path"] = ""
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) teamPolicies(ctx context.Context, v *v3x.Client) ([]v3x.TeamPolicy, error) {

@@ -102,6 +102,11 @@ type Entry struct {
 	Job      string          `json:"job,omitempty"`
 	Active   bool            `json:"active,omitempty"`   // publiée et active (pas en attente de validation)
 	Requests json.RawMessage `json:"requests,omitempty"` // demandes ouvertes auxquelles elle répond
+	// Tags : les étiquettes des torrents du client qui couvrent la release ;
+	// Skipped : l'une d'elles est à ne jamais publier (Réglages ▸ Ajouts) : la
+	// release reste affichée, grisée, et le lot ne la prend jamais.
+	Tags    []string `json:"tags,omitempty"`
+	Skipped bool     `json:"skipped,omitempty"`
 
 	linksRefused string // option « liens » refusée pour cette publication : la raison, dite sur la ligne
 }
@@ -115,8 +120,9 @@ type Run struct {
 	State          string    `json:"state"`
 	Stopped        bool      `json:"stopped"`
 	Current        string    `json:"current,omitempty"`
-	Label          string    `json:"label"`  // « Lot : 3 / 12 »
-	Detail         string    `json:"detail"` // « hachage 42 % », « ton client vérifie X »
+	Label          string    `json:"label"`              // « Lot : 3 / 12 »
+	Detail         string    `json:"detail"`             // « hachage 42 % », « ton client vérifie X »
+	TagsWarn       string    `json:"tagsWarn,omitempty"` // un client n'a pas répondu au démarrage : ses étiquettes manquent
 	Done           int       `json:"done"`
 	Total          int       `json:"total"`
 	Published      int       `json:"published"`
@@ -243,4 +249,25 @@ type Prepared struct {
 	Name    string
 	Summary string
 	Fields  map[string]string
+}
+
+// SkippedBy : les étiquettes de tags qui sont à ne jamais publier (skip, en
+// minuscules), jointes par « , » dans l'ordre de tags ; vide si aucune.
+func SkippedBy(tags []string, skip map[string]bool) string {
+	var bad []string
+	for _, t := range tags {
+		if skip[strings.ToLower(strings.TrimSpace(t))] {
+			bad = append(bad, t)
+		}
+	}
+	return strings.Join(bad, ", ")
+}
+
+// skipDetail : la raison affichée pour une release écartée par ses étiquettes.
+func skipDetail(bad string) string {
+	word := "étiquette"
+	if strings.Contains(bad, ", ") {
+		word = "étiquettes"
+	}
+	return word + " " + bad + " dans ton client : jamais publiée par un lot"
 }

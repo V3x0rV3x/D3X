@@ -40,6 +40,16 @@ func (d batchDeps) Entries(ctx context.Context, src source.Source, paths []strin
 
 func (d batchDeps) LastByPath() map[string]journal.Event { return journal.LastByPath() }
 
+func (d batchDeps) Tags(ctx context.Context, src source.Source, paths []string) (map[string][]string, string) {
+	lists, warn, _ := d.s.clientLists(ctx)
+	return lotTags(src, paths, lists), warn
+}
+func (d batchDeps) SkipTags() map[string]bool {
+	d.s.mu.Lock()
+	defer d.s.mu.Unlock()
+	return d.s.cfg.SkipTagSet()
+}
+
 func (d batchDeps) PubStart(src source.Source, path string) (*publish.Job, error) {
 	return d.s.pub.Start(src, path)
 }

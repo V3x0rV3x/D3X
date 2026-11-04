@@ -152,18 +152,7 @@ func (s *Server) env() (*crossseed.Env, error) {
 	}
 	c := *s.cfg
 	out := &crossseed.Env{V3X: s.v, Cfg: &c}
-	labels := clientLabels(c.Clients)
-	for _, cc := range c.Clients {
-		k := s.conns[cc.ID]
-		switch {
-		case k == nil || k.sig != connSig(cc):
-			out.Down = append(out.Down, crossseed.Down{ID: cc.ID, Name: labels[cc.ID], Error: "connexion en cours"})
-		case k.c == nil:
-			out.Down = append(out.Down, crossseed.Down{ID: cc.ID, Name: labels[cc.ID], Error: k.err})
-		default:
-			out.Targets = append(out.Targets, crossseed.Target{ID: cc.ID, Name: labels[cc.ID], Client: k.c, PathMap: cc.PathMap, LinksDir: strings.TrimSpace(cc.LinksDir), Host: hostOf(cc.URL)})
-		}
-	}
+	out.Targets, out.Down = s.targetsLocked()
 	if len(out.Targets) == 0 {
 		if len(out.Down) == 0 {
 			return nil, errors.New("D3X n'est pas connecté à ton client torrent : vérifie les réglages")
@@ -171,6 +160,31 @@ func (s *Server) env() (*crossseed.Env, error) {
 		return nil, errors.New(crossseed.DownText(out.Down))
 	}
 	return out, nil
+}
+
+// targets : les clients des réglages, joignables (Targets) ou non (Down), sans
+// exiger V3X : la liste du Lot lit leurs étiquettes même hors ligne.
+func (s *Server) targets() (targets []crossseed.Target, down []crossseed.Down) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.targetsLocked()
+}
+
+// targetsLocked : targets, le verrou tenu.
+func (s *Server) targetsLocked() (targets []crossseed.Target, down []crossseed.Down) {
+	labels := clientLabels(s.cfg.Clients)
+	for _, cc := range s.cfg.Clients {
+		k := s.conns[cc.ID]
+		switch {
+		case k == nil || k.sig != connSig(cc):
+			down = append(down, crossseed.Down{ID: cc.ID, Name: labels[cc.ID], Error: "connexion en cours"})
+		case k.c == nil:
+			down = append(down, crossseed.Down{ID: cc.ID, Name: labels[cc.ID], Error: k.err})
+		default:
+			targets = append(targets, crossseed.Target{ID: cc.ID, Name: labels[cc.ID], Client: k.c, PathMap: cc.PathMap, LinksDir: strings.TrimSpace(cc.LinksDir), Host: hostOf(cc.URL)})
+		}
+	}
+	return targets, down
 }
 
 // ready : de quoi lancer une analyse (V3X joint, au moins un client réglé ;

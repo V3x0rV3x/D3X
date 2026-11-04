@@ -559,6 +559,8 @@ dialog .confirm dd { margin: 0; word-break: break-word; }
 #b-fs { margin-top: 10px; }
 .b-actions { display: flex; gap: 6px; justify-content: flex-end; white-space: nowrap; }
 .rows tr.current td { background: var(--accent-soft); }
+.rows tr.skipped td { opacity: .55; }
+.lot-tags { display: flex; flex-wrap: wrap; gap: 4px; max-width: 240px; }
 
 /* ---------- téléphone et fenêtres étroites ---------- */
 @media (max-width: 760px) {

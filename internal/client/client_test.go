@@ -32,6 +32,7 @@ func sampleTorrent(t *testing.T) ([]byte, string) {
 
 func TestTransmission(t *testing.T) {
 	raw, hash := sampleTorrent(t)
+	var getFields []interface{}
 	var calls []string
 	var addArgs, removeArgs map[string]interface{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -59,9 +60,11 @@ func TestTransmission(t *testing.T) {
 		case "session-get":
 			res["version"] = "4.0.6"
 		case "torrent-get":
+			getFields, _ = req.Arguments["fields"].([]interface{})
 			res["torrents"] = []map[string]interface{}{{"hashString": strings.ToUpper(hash), "name": "Release.Test", "totalSize": 1000, "sizeWhenDone": 1000,
 				"downloadDir": "/data", "percentDone": 1.0, "status": 2, "trackers": []map[string]string{{"announce": "https://announce.v3x.club/pk/announce"}},
-				"files": []map[string]interface{}{{"name": "Release.Test/a.mkv", "length": 1000}}}}
+				"labels": []string{" noHL ", "V3X", ""},
+				"files":  []map[string]interface{}{{"name": "Release.Test/a.mkv", "length": 1000}}}}
 		case "torrent-add":
 			addArgs = req.Arguments
 			res["torrent-added"] = map[string]interface{}{"hashString": hash}
@@ -87,6 +90,17 @@ func TestTransmission(t *testing.T) {
 	tor := list[0]
 	if tor.Hash != hash || tor.ContentPath != "/data/Release.Test" || !tor.Checking || tor.Trackers[0] != "announce.v3x.club" {
 		t.Fatalf("torrent : %+v", tor)
+	}
+	if len(tor.Tags) != 2 || tor.Tags[0] != "noHL" || tor.Tags[1] != "V3X" {
+		t.Fatalf("étiquettes : %q", tor.Tags)
+	}
+	// Vérifié tout de suite : Files refait un torrent-get avec d'autres champs.
+	asked := false
+	for _, f := range getFields {
+		asked = asked || f == "labels"
+	}
+	if !asked {
+		t.Fatalf("torrent-get sans « labels » : %v", getFields)
 	}
 	files, total, err := c.Files(ctx, hash)
 	if err != nil || total != 1000 || files[0].Path != "Release.Test/a.mkv" {
@@ -169,8 +183,11 @@ func TestDeluge(t *testing.T) {
 			reply(nil, "Unknown method")
 		case "core.get_torrents_status":
 			reply(map[string]interface{}{hash: map[string]interface{}{"name": "Release.Test", "save_path": "/dl", "total_size": 1000, "total_wanted": 1000,
-				"progress": 100.0, "state": "Paused", "trackers": []map[string]string{{"url": "https://autre.invalid/a"}},
-				"files": []map[string]interface{}{{"path": "Release.Test/a.mkv", "size": 1000}}}}, "")
+				"progress": 100.0, "state": "Paused", "label": "nohl", "trackers": []map[string]string{{"url": "https://autre.invalid/a"}},
+				"files": []map[string]interface{}{{"path": "Release.Test/a.mkv", "size": 1000}}},
+				// Sans le plugin Label : pas de clé « label ».
+				"e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2": map[string]interface{}{"name": "Sans.Label", "save_path": "/dl", "total_size": 10, "total_wanted": 10,
+					"progress": 100.0, "state": "Paused"}}, "")
 		case "core.add_torrent_file":
 			addOpts = req.Params[2].(map[string]interface{})
 			reply(hash, "")
@@ -197,9 +214,26 @@ func TestDeluge(t *testing.T) {
 	if v, err := c.Version(ctx); err != nil || v != "2.1.1" || !connected {
 		t.Fatalf("version : %q %v (démon relié : %v)", v, err, connected)
 	}
-	list, err := c.List(ctx, []string{hash})
-	if err != nil || len(list) != 1 || list[0].ContentPath != "/dl/Release.Test" || list[0].Progress != 1 || list[0].Checking {
-		t.Fatalf("liste : %+v %v", list, err)
+	all, err := c.List(ctx, nil)
+	if err != nil || len(all) != 2 {
+		t.Fatalf("liste : %+v %v", all, err)
+	}
+	// List parcourt une map : on retrouve chaque torrent par son hash.
+	byHash := map[string]Torrent{}
+	for _, x := range all {
+		byHash[x.Hash] = x
+	}
+	first := byHash[hash]
+	if first.ContentPath != "/dl/Release.Test" || first.Progress != 1 || first.Checking {
+		t.Fatalf("liste : %+v", all)
+	}
+	// Plugin Label : une seule étiquette par torrent ; sans le plugin, la clé
+	// manque et le torrent n'en a aucune.
+	if len(first.Tags) != 1 || first.Tags[0] != "nohl" {
+		t.Fatalf("étiquette : %q", first.Tags)
+	}
+	if sans, ok := byHash["e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2"]; !ok || sans.Tags != nil {
+		t.Fatalf("sans label : %+v", sans)
 	}
 	files, total, err := c.Files(ctx, hash)
 	if err != nil || total != 1000 || files[0].Path != "Release.Test/a.mkv" {
@@ -269,8 +303,9 @@ func TestRTorrent(t *testing.T) {
 		case "system.client_version":
 			io.WriteString(w, xmlResp("0.9.8"))
 		case "d.multicall2":
-			row := []interface{}{strings.ToUpper(hash), "Release.Test", "/home/box/dl/Release.Test", 1000, 1000, 0, 1, 1, 1}
-			io.WriteString(w, xmlResp([]interface{}{row}))
+			row := []interface{}{strings.ToUpper(hash), "Release.Test", "/home/box/dl/Release.Test", 1000, 1000, 0, 1, 1, 1, " no%20HL "}
+			sans := []interface{}{strings.ToUpper("e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2"), "Sans.Etiquette", "/home/box/dl/Sans.Etiquette", 10, 10, 0, 0, 1, 1, ""}
+			io.WriteString(w, xmlResp([]interface{}{row, sans}))
 		case "system.multicall":
 			io.WriteString(w, xmlResp([]interface{}{[]interface{}{[]interface{}{[]interface{}{"https://announce.v3x.club/pk/announce"}}}}))
 		case "f.multicall":
@@ -295,12 +330,23 @@ func TestRTorrent(t *testing.T) {
 		t.Fatalf("version : %q %v", v, err)
 	}
 	list, err := c.List(ctx, nil)
-	if err != nil || len(list) != 1 {
+	if err != nil || len(list) != 2 {
 		t.Fatalf("liste : %v %v", list, err)
 	}
 	tor := list[0]
 	if tor.Hash != hash || tor.ContentPath != "/home/box/dl/Release.Test" || !tor.Checking || len(tor.Trackers) != 1 || tor.Trackers[0] != "announce.v3x.club" {
 		t.Fatalf("torrent : %+v", tor)
+	}
+	// L'étiquette de ruTorrent (d.custom1), celle que D3X écrit à l'ajout.
+	// ruTorrent l'encode en pourcent (« no%20HL »).
+	if len(tor.Tags) != 1 || tor.Tags[0] != "no HL" {
+		t.Fatalf("étiquette : %q", tor.Tags)
+	}
+	if list[1].Hash != "e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2" || list[1].Tags != nil {
+		t.Fatalf("sans étiquette : %+v", list[1])
+	}
+	if rtLabel("100%") != "100%" {
+		t.Fatal("rtLabel : une étiquette qui ne se décode pas doit rester telle quelle")
 	}
 	files, total, err := c.Files(ctx, hash)
 	if err != nil || total != 1000 || len(files) != 1 || files[0].Path != "Release.Test/a.mkv" {
@@ -360,5 +406,21 @@ func TestRTorrentAddAndFault(t *testing.T) {
 	}
 	if err := c.Start(ctx, "abc"); err == nil || !strings.Contains(err.Error(), "Could not find info-hash") {
 		t.Fatalf("erreur XML-RPC : %v", err)
+	}
+}
+
+// tagList : les étiquettes telles que les clients les donnent (chaîne « a, b »
+// de qBittorrent coupée sur la virgule, labels de Transmission, label de
+// Deluge, custom1 de rTorrent), sans les blancs ni les vides.
+func TestTagList(t *testing.T) {
+	got := tagList(strings.Split("noHL, V3X,, cross-seed ", ","))
+	if len(got) != 3 || got[0] != "noHL" || got[1] != "V3X" || got[2] != "cross-seed" {
+		t.Fatalf("qBittorrent : %q", got)
+	}
+	if got := tagList([]string{" ", ""}); got != nil {
+		t.Fatalf("rien : %q, attendu nil", got)
+	}
+	if got := tagList(nil); got != nil {
+		t.Fatalf("nil : %q", got)
 	}
 }

@@ -161,6 +161,7 @@ type dlTorrent struct {
 	Trackers    []struct {
 		URL string `json:"url"`
 	} `json:"trackers"`
+	Label string `json:"label"` // plugin Label ; absent sans lui
 	Files []struct {
 		Index int    `json:"index"`
 		Path  string `json:"path"`
@@ -179,7 +180,7 @@ func (d *deluge) status(ctx context.Context, hashes []string, fields []string) (
 }
 
 func (d *deluge) List(ctx context.Context, hashes []string) ([]Torrent, error) {
-	m, err := d.status(ctx, hashes, []string{"name", "save_path", "total_size", "total_wanted", "progress", "state", "trackers"})
+	m, err := d.status(ctx, hashes, []string{"name", "save_path", "total_size", "total_wanted", "progress", "state", "trackers", "label"})
 	if err != nil {
 		return nil, err
 	}
@@ -198,6 +199,7 @@ func (d *deluge) List(ctx context.Context, hashes []string) ([]Torrent, error) {
 			Downloading: (x.State == "Downloading" || x.State == "Queued") && p < 1,
 			Stopped:     x.State == "Paused",
 			Trackers:    TrackerHosts(urls),
+			Tags:        tagList([]string{x.Label}),
 		})
 	}
 	return out, nil
