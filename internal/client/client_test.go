@@ -32,6 +32,7 @@ func sampleTorrent(t *testing.T) ([]byte, string) {
 
 func TestTransmission(t *testing.T) {
 	raw, hash := sampleTorrent(t)
+	var getFields []interface{}
 	var calls []string
 	var addArgs, removeArgs map[string]interface{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -59,9 +60,11 @@ func TestTransmission(t *testing.T) {
 		case "session-get":
 			res["version"] = "4.0.6"
 		case "torrent-get":
+			getFields, _ = req.Arguments["fields"].([]interface{})
 			res["torrents"] = []map[string]interface{}{{"hashString": strings.ToUpper(hash), "name": "Release.Test", "totalSize": 1000, "sizeWhenDone": 1000,
 				"downloadDir": "/data", "percentDone": 1.0, "status": 2, "trackers": []map[string]string{{"announce": "https://announce.v3x.club/pk/announce"}},
-				"files": []map[string]interface{}{{"name": "Release.Test/a.mkv", "length": 1000}}}}
+				"labels": []string{" noHL ", "V3X", ""},
+				"files":  []map[string]interface{}{{"name": "Release.Test/a.mkv", "length": 1000}}}}
 		case "torrent-add":
 			addArgs = req.Arguments
 			res["torrent-added"] = map[string]interface{}{"hashString": hash}
@@ -87,6 +90,16 @@ func TestTransmission(t *testing.T) {
 	tor := list[0]
 	if tor.Hash != hash || tor.ContentPath != "/data/Release.Test" || !tor.Checking || tor.Trackers[0] != "announce.v3x.club" {
 		t.Fatalf("torrent : %+v", tor)
+	}
+	if len(tor.Tags) != 2 || tor.Tags[0] != "noHL" || tor.Tags[1] != "V3X" {
+		t.Fatalf("étiquettes : %q", tor.Tags)
+	}
+	asked := false
+	for _, f := range getFields {
+		asked = asked || f == "labels"
+	}
+	if !asked {
+		t.Fatalf("torrent-get sans « labels » : %v", getFields)
 	}
 	files, total, err := c.Files(ctx, hash)
 	if err != nil || total != 1000 || files[0].Path != "Release.Test/a.mkv" {
