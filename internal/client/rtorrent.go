@@ -223,7 +223,7 @@ func (r *rtorrent) Version(ctx context.Context) (string, error) {
 	return asString(v), err
 }
 
-var rtFields = []string{"d.hash=", "d.name=", "d.directory=", "d.size_bytes=", "d.completed_bytes=", "d.state=", "d.hashing=", "d.complete=", "d.is_multi_file="}
+var rtFields = []string{"d.hash=", "d.name=", "d.directory=", "d.size_bytes=", "d.completed_bytes=", "d.state=", "d.hashing=", "d.complete=", "d.is_multi_file=", "d.custom1="}
 
 func (r *rtorrent) List(ctx context.Context, hashes []string) ([]Torrent, error) {
 	params := []interface{}{"", "main"}
@@ -264,6 +264,7 @@ func (r *rtorrent) List(ctx context.Context, hashes []string) ([]Torrent, error)
 			Checking:    asInt(f[6]) != 0,
 			Downloading: asInt(f[5]) == 1 && asInt(f[7]) == 0,
 			Stopped:     asInt(f[5]) == 0,
+			Tags:        tagList([]string{asString(f[9])}), // l'étiquette de ruTorrent
 		})
 	}
 	// Trackers, par lots d'appels groupés.

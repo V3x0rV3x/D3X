@@ -287,7 +287,7 @@ func TestRTorrent(t *testing.T) {
 		case "system.client_version":
 			io.WriteString(w, xmlResp("0.9.8"))
 		case "d.multicall2":
-			row := []interface{}{strings.ToUpper(hash), "Release.Test", "/home/box/dl/Release.Test", 1000, 1000, 0, 1, 1, 1}
+			row := []interface{}{strings.ToUpper(hash), "Release.Test", "/home/box/dl/Release.Test", 1000, 1000, 0, 1, 1, 1, " noHL "}
 			io.WriteString(w, xmlResp([]interface{}{row}))
 		case "system.multicall":
 			io.WriteString(w, xmlResp([]interface{}{[]interface{}{[]interface{}{[]interface{}{"https://announce.v3x.club/pk/announce"}}}}))
@@ -319,6 +319,10 @@ func TestRTorrent(t *testing.T) {
 	tor := list[0]
 	if tor.Hash != hash || tor.ContentPath != "/home/box/dl/Release.Test" || !tor.Checking || len(tor.Trackers) != 1 || tor.Trackers[0] != "announce.v3x.club" {
 		t.Fatalf("torrent : %+v", tor)
+	}
+	// L'étiquette de ruTorrent (d.custom1), celle que D3X écrit à l'ajout.
+	if len(tor.Tags) != 1 || tor.Tags[0] != "noHL" {
+		t.Fatalf("étiquette : %q", tor.Tags)
 	}
 	files, total, err := c.Files(ctx, hash)
 	if err != nil || total != 1000 || len(files) != 1 || files[0].Path != "Release.Test/a.mkv" {
