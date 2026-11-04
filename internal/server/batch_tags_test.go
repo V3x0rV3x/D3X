@@ -1,17 +1,18 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/V3x0rV3x/D3X/internal/config"
 	"github.com/V3x0rV3x/D3X/internal/pathmap"
 	"github.com/V3x0rV3x/D3X/internal/qbit"
+	"github.com/V3x0rV3x/D3X/internal/source"
 )
 
 // La liste du Lot dit les étiquettes des torrents qui couvrent chaque release
@@ -57,8 +58,13 @@ func TestLotSkipTags(t *testing.T) {
 	if code != http.StatusOK || out["tagged"] != true || fmt.Sprint(out["skipTags"]) != "[nohl LastSeed]" {
 		t.Fatalf("%d %s", code, body)
 	}
-	if warn, _ := out["tagsWarn"].(string); warn == "" || !strings.Contains(warn, "Étiquettes non lues") || !strings.Contains(warn, "Seedbox") {
+	if warn, _ := out["tagsWarn"].(string); warn != "Étiquettes de Seedbox non lues (client injoignable) : le lot ne partira pas sans elles." {
 		t.Fatalf("client injoignable non signalé : %q", out["tagsWarn"])
+	}
+	// Le démarrage d'un lot relit les étiquettes : le client toujours muet, il
+	// ne part pas (revue du 04/11/26).
+	if _, err := (batchDeps{s}).Tags(context.Background(), source.Local{}, []string{filepath.Join(parent, "Film.Libre.2021")}); err == nil || err.Error() != "Étiquettes à ne jamais publier : le client Seedbox ne répond pas, le lot ne part pas tant qu'on ne peut pas lire ses étiquettes" {
+		t.Fatalf("lot parti sans les étiquettes de la seedbox : %v", err)
 	}
 	got := map[string]map[string]interface{}{}
 	for _, x := range out["entries"].([]interface{}) {
@@ -99,6 +105,22 @@ func TestLotSkipTags(t *testing.T) {
 	}
 	if skipped != 1 {
 		t.Errorf("règle devinée : %d écartée(s), attendu 1 : %v", skipped, out["entries"])
+	}
+
+	// Sans étiquette à ne jamais publier : aucun client lu, ni colonne ni
+	// avertissement (comme avant), même avec un client muet.
+	cfg4 := config.Defaults()
+	cfg4.Clients = cfg.Clients
+	s4 := NewWith("test", cfg4, "jeton-de-test-0123456789abcdef", 8733, Options{})
+	s4.connect()
+	_, out, _ = call(t, s4, "GET", "/ui/batch/list?source=local&path="+url.QueryEscape(parent), nil)
+	if out["tagged"] != false || out["tagsWarn"] != "" {
+		t.Errorf("sans réglage : %v", out)
+	}
+	for _, x := range out["entries"].([]interface{}) {
+		if e := x.(map[string]interface{}); e["tags"] != nil || e["skipped"] != nil {
+			t.Errorf("sans réglage, étiquettes lues : %v", e)
+		}
 	}
 
 	// Sans client réglé : pas de colonne à montrer, rien d'écarté.

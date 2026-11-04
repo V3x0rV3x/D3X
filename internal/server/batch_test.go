@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/V3x0rV3x/D3X/internal/config"
+	"github.com/V3x0rV3x/D3X/internal/releases"
 )
 
 // Le lot tourne dans D3X : démarré par la page, il continue sans elle. Ici
@@ -41,12 +42,22 @@ func TestLotServerSide(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Dossier rangé par une médiathèque, sans nom de release nulle part
+	// (Ekhstaz, 04/11/26) : envoyé par la page, D3X le saute quand même.
+	media := filepath.Join(parent, "Film Rangé (2003) [ImdbID-tt0315733]")
+	if err := os.MkdirAll(media, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(media, "Film Rangé (2003).mkv"), make([]byte, 1<<20), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	paths := []string{
 		filepath.Join(parent, "Demonstration.2024.MULTi.1080p.WEB.H264-DEMO"),
-		filepath.Join(parent, "Autre.Fichier.Seul.2023.mkv"),
+		filepath.Join(parent, "Autre.Fichier.Seul.2023.1080p.WEB.H264.mkv"),
 		filepath.Join(parent, "Logiciel.Demo.v1.0"),
 		filepath.Join(parent, "Livre.Demo.2022.epub"),
 		filepath.Join(parent, "Collection.Demo"),
+		media,
 	}
 	// Un lot ne part que sur une demande de ce lancement de D3X : celle d'avant
 	// un redémarrage (renvoyée, ou page d'avant la 1.1.39 sans « boot ») est
@@ -64,6 +75,9 @@ func TestLotServerSide(t *testing.T) {
 	code, out, body := call(t, s, "POST", "/ui/batch/start", map[string]interface{}{"path": parent, "source": "local", "paths": paths, "boot": boot, "options": map[string]interface{}{"sim": true, "video": true, "cap": 300}})
 	if code != http.StatusOK || out["state"] != "running" {
 		t.Fatalf("%d %s", code, body)
+	}
+	if out["total"] != float64(5) {
+		t.Fatalf("total %v, attendu 5 (le dossier sans nom de release n'en fait pas partie)", out["total"])
 	}
 	if code, _, body := call(t, s, "POST", "/ui/batch/start", map[string]interface{}{"path": parent, "source": "local", "paths": paths[:1], "boot": boot}); code != http.StatusConflict {
 		t.Fatalf("second lot accepté : %d %s", code, body)
@@ -133,7 +147,7 @@ func TestLotServerSide(t *testing.T) {
 		"Logiciel.Demo.v1.0":                           "review",
 		"Livre.Demo.2022.epub":                         "review",
 		"Collection.Demo":                              "review",
-		"Autre.Fichier.Seul.2023.mkv":                  "review", // pas d'œuvre TMDB certaine
+		"Autre.Fichier.Seul.2023.1080p.WEB.H264.mkv":   "review", // pas d'œuvre TMDB certaine
 		"Demonstration.2024.MULTi.1080p.WEB.H264-DEMO": "review", // le faux V3X annonce un REPACK
 	}
 	for n, w := range want {
@@ -141,10 +155,13 @@ func TestLotServerSide(t *testing.T) {
 			t.Errorf("%s : %v, attendu %s", n, got[n], w)
 		}
 	}
+	if g := got[filepath.Base(media)]; g != [2]string{"pending", releases.BadNameDir} {
+		t.Errorf("dossier sans nom de release : %v", g)
+	}
 	if d := got["Demonstration.2024.MULTi.1080p.WEB.H264-DEMO"][1]; !strings.Contains(d, "un REPACK de cette release est déjà sur V3X") {
 		t.Errorf("REPACK non vu : %q", d)
 	}
-	if d := got["Autre.Fichier.Seul.2023.mkv"][1]; !strings.Contains(d, "œuvre TMDB incertaine") || !strings.Contains(d, "catégorie à choisir") {
+	if d := got["Autre.Fichier.Seul.2023.1080p.WEB.H264.mkv"][1]; !strings.Contains(d, "œuvre TMDB incertaine") || !strings.Contains(d, "catégorie à choisir") {
 		t.Errorf("raisons : %q", d)
 	}
 	// Le serveur n'est plus occupé, et le journal garde les décisions.

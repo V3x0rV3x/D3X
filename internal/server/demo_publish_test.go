@@ -38,7 +38,7 @@ func demoRelease(root string) string {
 	_ = os.WriteFile(filepath.Join(dir, name+".nfo"), []byte("Release de démonstration\n"), 0o644)
 	_ = os.WriteFile(filepath.Join(dir, ".DS_Store"), []byte("x"), 0o644)
 	_ = os.MkdirAll(filepath.Join(dir, "extrafanart"), 0o755)
-	_ = os.WriteFile(filepath.Join(parent, "Autre.Fichier.Seul.2023.mkv"), b[:3<<20], 0o644)
+	_ = os.WriteFile(filepath.Join(parent, "Autre.Fichier.Seul.2023.1080p.WEB.H264.mkv"), b[:3<<20], 0o644)
 	// Releases piégées pour le mode lot.
 	soft := filepath.Join(parent, "Logiciel.Demo.v1.0")
 	_ = os.MkdirAll(soft, 0o755)

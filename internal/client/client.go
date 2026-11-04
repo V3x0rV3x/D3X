@@ -38,6 +38,10 @@ type Torrent struct {
 	// qu'écrites ; vide si le client n'en met pas. Le Lot écarte les releases
 	// d'un torrent qui porte une étiquette à ne jamais publier (noHL).
 	Tags []string
+	// SavePath : le dossier d'enregistrement, quand le client le dit à part
+	// (qBittorrent). Un torrent multi-fichiers sans dossier racine y a son
+	// ContentPath : ce n'est pas un dossier de release.
+	SavePath string
 }
 
 // AddOptions règle un ajout (toujours à l'arrêt).

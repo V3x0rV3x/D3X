@@ -426,39 +426,6 @@ func TestCancelRightAfterStart(t *testing.T) {
 	}
 }
 
-// Dossier rangé par une médiathèque (Hypsis, 27/10/26) : le nom proposé est
-// celui de sa vidéo quand le dossier n'a pas l'air d'un nom de release.
-func TestNameFromVideo(t *testing.T) {
-	plan := func(name string, single bool, files ...maketorrent.Entry) *maketorrent.Plan {
-		p := &maketorrent.Plan{Name: name, Single: single, Files: files}
-		for _, f := range files {
-			p.Total += f.Size
-		}
-		return p
-	}
-	movie := maketorrent.Entry{Rel: "1917.2019.MULTi.1080p.BluRay.x264-GROUPE.mkv", Size: 8 << 30}
-	srt := maketorrent.Entry{Rel: "1917.2019.MULTi.1080p.BluRay.x264-GROUPE.fr.srt", Size: 80 << 10}
-	for _, c := range []struct {
-		name string
-		p    *maketorrent.Plan
-		main int
-		want string
-	}{
-		{"dossier de médiathèque", plan("1917 (2019)", false, srt, movie), 1, "1917.2019.MULTi.1080p.BluRay.x264-GROUPE"},
-		{"dossier de release", plan("1917.2019.MULTi.1080p.BluRay.x264-GROUPE", false, movie), 0, ""},
-		{"fichier seul", plan(movie.Rel, true, movie), 0, ""},
-		{"vidéo sans nom de release", plan("1917 (2019)", false, maketorrent.Entry{Rel: "1917 (2019).mkv", Size: 8 << 30}), 0, ""},
-		{"saison", plan("Série (2020)", false,
-			maketorrent.Entry{Rel: "Saison 1/Serie.S01E01.1080p.WEB.H264-GRP.mkv", Size: 2 << 30},
-			maketorrent.Entry{Rel: "Saison 1/Serie.S01E02.1080p.WEB.H264-GRP.mkv", Size: 1 << 30},
-			maketorrent.Entry{Rel: "Saison 1/Serie.S01E03.1080p.WEB.H264-GRP.mkv", Size: 1 << 30}), 0, ""},
-	} {
-		if got := nameFromVideo(c.p, c.main); got != c.want {
-			t.Errorf("%s : %q, attendu %q", c.name, got, c.want)
-		}
-	}
-}
-
 func TestKindOf(t *testing.T) {
 	plan := func(files ...maketorrent.Entry) *maketorrent.Plan { return &maketorrent.Plan{Files: files} }
 	flac := func(n string, size int64) maketorrent.Entry { return maketorrent.Entry{Rel: n + ".flac", Size: size} }

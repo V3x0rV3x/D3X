@@ -120,9 +120,8 @@ type Run struct {
 	State          string    `json:"state"`
 	Stopped        bool      `json:"stopped"`
 	Current        string    `json:"current,omitempty"`
-	Label          string    `json:"label"`              // « Lot : 3 / 12 »
-	Detail         string    `json:"detail"`             // « hachage 42 % », « ton client vérifie X »
-	TagsWarn       string    `json:"tagsWarn,omitempty"` // un client n'a pas répondu au démarrage : ses étiquettes manquent
+	Label          string    `json:"label"`  // « Lot : 3 / 12 »
+	Detail         string    `json:"detail"` // « hachage 42 % », « ton client vérifie X »
 	Done           int       `json:"done"`
 	Total          int       `json:"total"`
 	Published      int       `json:"published"`

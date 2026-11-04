@@ -34,7 +34,7 @@ func (q *qbitClient) List(ctx context.Context, hashes []string) ([]Torrent, erro
 	out := make([]Torrent, 0, len(list))
 	for _, t := range list {
 		out = append(out, Torrent{
-			Hash: strings.ToLower(t.Hash), Hashes: t.Hashes(), Name: t.Name, ContentPath: t.ContentPath,
+			Hash: strings.ToLower(t.Hash), Hashes: t.Hashes(), Name: t.Name, ContentPath: t.ContentPath, SavePath: t.SavePath,
 			Size: t.Size, TotalSize: t.TotalSize, Progress: t.Progress,
 			Checking: t.Checking(), Downloading: t.Downloading(), Stopped: t.Stopped(), Trackers: t.TrackerHosts(),
 			Category: t.Category,

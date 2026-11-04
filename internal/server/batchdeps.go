@@ -40,9 +40,14 @@ func (d batchDeps) Entries(ctx context.Context, src source.Source, paths []strin
 
 func (d batchDeps) LastByPath() map[string]journal.Event { return journal.LastByPath() }
 
-func (d batchDeps) Tags(ctx context.Context, src source.Source, paths []string) (map[string][]string, string) {
-	lists, warn, _ := d.s.clientLists(ctx)
-	return lotTags(src, paths, lists), warn
+// Tags : un client injoignable est retenté (clientLists) ; s'il ne répond
+// toujours pas, le lot ne part pas (tagsUnread).
+func (d batchDeps) Tags(ctx context.Context, src source.Source, paths []string) (map[string][]string, error) {
+	lists, down, _ := d.s.clientLists(ctx)
+	if len(down) > 0 {
+		return nil, tagsUnread(down)
+	}
+	return lotTags(src, paths, lists), nil
 }
 func (d batchDeps) SkipTags() map[string]bool {
 	d.s.mu.Lock()

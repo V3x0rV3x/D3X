@@ -20,8 +20,8 @@ import (
 	"github.com/V3x0rV3x/D3X/internal/crossseed"
 	"github.com/V3x0rV3x/D3X/internal/journal"
 	"github.com/V3x0rV3x/D3X/internal/maketorrent"
-	"github.com/V3x0rV3x/D3X/internal/names"
 	"github.com/V3x0rV3x/D3X/internal/pathmap"
+	"github.com/V3x0rV3x/D3X/internal/releases"
 	"github.com/V3x0rV3x/D3X/internal/source"
 	"github.com/V3x0rV3x/D3X/internal/torrent"
 	"github.com/V3x0rV3x/D3X/internal/v3x"
@@ -60,7 +60,7 @@ type Job struct {
 	PieceLength int64    `json:"pieceLength"`
 	MainFile    int      `json:"mainFile"` // index du plus gros fichier vidéo, sinon audio (MediaInfo)
 	// NameFromVideo : nom de release proposé à la place de celui du dossier,
-	// repris de sa vidéo principale (nameFromVideo) ; vide sinon.
+	// repris de sa vidéo principale (releases.NameFromVideo) ; vide sinon.
 	NameFromVideo string `json:"nameFromVideo,omitempty"`
 	// Album : tags et qualité des pistes, quand la release en est un.
 	Audio *audio.Album `json:"audio,omitempty"`
@@ -129,29 +129,6 @@ func New(c Clients, e *crossseed.Engine, version string) *Manager {
 
 var videoExt = map[string]bool{".mkv": true, ".mp4": true, ".avi": true, ".m2ts": true, ".ts": true, ".mov": true, ".wmv": true, ".webm": true, ".mpg": true, ".mpeg": true, ".m4v": true, ".iso": true, ".vob": true}
 
-// nameFromVideo : le nom de release à proposer pour un dossier qui n'en porte
-// pas (Hypsis, 27/10/26 : « 1917 (2019) » rangé par une médiathèque, sa vidéo
-// « 1917.2019.MULTi.1080p.BluRay.x264-GROUPE.mkv ») : celui de la vidéo
-// principale, sans extension, s'il a l'air d'un nom de release. Vide quand
-// le dossier porte déjà un nom de release (le cas normal), pour un fichier
-// seul, ou quand la vidéo ne fait pas plus de la moitié de la release (une
-// saison : un épisode n'est pas son nom).
-func nameFromVideo(plan *maketorrent.Plan, main int) string {
-	if plan.Single || main < 0 || main >= len(plan.Files) || names.LooksLikeRelease(plan.Name) {
-		return ""
-	}
-	f := plan.Files[main]
-	if !videoExt[strings.ToLower(path.Ext(f.Rel))] || f.Size*2 <= plan.Total {
-		return ""
-	}
-	base := path.Base(f.Rel)
-	base = strings.TrimSpace(strings.TrimSuffix(base, path.Ext(base)))
-	if !names.LooksLikeRelease(base) {
-		return ""
-	}
-	return base
-}
-
 // kind : la plus grosse vidéo et la plus grosse piste d'une release (-1 si
 // aucune), et si c'est un album (audio.Dominates).
 type kind struct {
@@ -198,7 +175,7 @@ func (m *Manager) SetMusic(id string, music bool) error {
 		}
 		m.mu.Lock()
 		j.Audio, j.MainFile = nil, k.mainVideo
-		j.NameFromVideo = nameFromVideo(j.plan, k.mainVideo)
+		j.NameFromVideo = releases.NameFromVideo(j.plan, k.mainVideo)
 		m.mu.Unlock()
 		return nil
 	}
@@ -259,7 +236,7 @@ func (m *Manager) Start(src source.Source, where string) (*Job, error) {
 		}
 	} else if k.mainVideo >= 0 {
 		j.MainFile = k.mainVideo
-		j.NameFromVideo = nameFromVideo(plan, j.MainFile)
+		j.NameFromVideo = releases.NameFromVideo(plan, j.MainFile)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)

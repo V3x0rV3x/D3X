@@ -31,20 +31,53 @@ type batchEntry struct {
 }
 
 // clientLists : la liste de chaque client, tous en même temps (au plus le
-// délai du contexte, et celui de ListAll : 3 min par client) ; warn nomme
+// délai du contexte, et celui de ListAll : 3 min par client), après une
+// nouvelle tentative sur un client injoignable ou encore en connexion ; down :
 // ceux qui n'ont pas répondu (leurs étiquettes manquent) ; tagged : au moins
 // un client est réglé (sans client, la page n'a pas de colonne « Étiquettes »
 // à montrer). V3X n'est pas requis.
-func (s *Server) clientLists(ctx context.Context) (lists []crossseed.Listed, warn string, tagged bool) {
+func (s *Server) clientLists(ctx context.Context) (lists []crossseed.Listed, down []crossseed.Down, tagged bool) {
+	s.retryClients(ctx)
 	targets, down := s.targets()
 	if len(targets) == 0 && len(down) == 0 {
-		return nil, "", false
+		return nil, nil, false
 	}
 	lists, down = crossseed.ListAll(ctx, &crossseed.Env{Targets: targets, Down: down})
-	if len(down) > 0 {
-		warn = "Étiquettes non lues : " + crossseed.DownText(down)
+	return lists, down, true
+}
+
+// downNames : « Seedbox », « Seedbox et NAS », « PC, Seedbox et NAS ».
+func downNames(down []crossseed.Down) string {
+	n := make([]string, len(down))
+	for i, d := range down {
+		n[i] = d.Name
 	}
-	return lists, warn, true
+	if len(n) == 1 {
+		return n[0]
+	}
+	return strings.Join(n[:len(n)-1], ", ") + " et " + n[len(n)-1]
+}
+
+// tagsWarn : ce que la liste du Lot dit d'un client dont les étiquettes
+// manquent ; le lot ne partira pas sans elles (tagsUnread).
+func tagsWarn(down []crossseed.Down) string {
+	if len(down) == 0 {
+		return ""
+	}
+	if len(down) == 1 {
+		return "Étiquettes de " + downNames(down) + " non lues (client injoignable) : le lot ne partira pas sans elles."
+	}
+	return "Étiquettes de " + downNames(down) + " non lues (clients injoignables) : le lot ne partira pas sans elles."
+}
+
+// tagsUnread : le refus de démarrer un lot quand des étiquettes à ne jamais
+// publier sont réglées et qu'un client n'a pas pu être lu (revue du
+// 04/11/26) : publier sans ses étiquettes ferait passer ce qu'il écarte.
+func tagsUnread(down []crossseed.Down) error {
+	if len(down) == 1 {
+		return errors.New("Étiquettes à ne jamais publier : le client " + downNames(down) + " ne répond pas, le lot ne part pas tant qu'on ne peut pas lire ses étiquettes")
+	}
+	return errors.New("Étiquettes à ne jamais publier : les clients " + downNames(down) + " ne répondent pas, le lot ne part pas tant qu'on ne peut pas lire leurs étiquettes")
 }
 
 // lotTags : les étiquettes des torrents qui couvrent chaque chemin, la
@@ -63,16 +96,26 @@ func (s *Server) lotEntries(ctx context.Context, src source.Source, list func() 
 		warn   string
 		tagged bool
 	}
+	s.mu.Lock()
+	skip := s.cfg.SkipTagSet()
+	skipList := append([]string{}, s.cfg.SkipTags...)
+	s.mu.Unlock()
 	// Les clients, pendant la lecture du dossier ; 45 s au plus : un client qui
-	// ne répond pas est dit (« Étiquettes non lues »), la page n'attend pas, et
-	// le démarrage du lot relit les étiquettes avec son propre délai.
-	lctx, lcancel := context.WithTimeout(ctx, 45*time.Second)
-	defer lcancel()
+	// ne répond pas est dit (« Étiquettes … non lues »), la page n'attend pas,
+	// et le démarrage du lot relit les étiquettes avec son propre délai. Sans
+	// étiquette à ne jamais publier, aucun client n'est lu : ni colonne ni
+	// avertissement, comme avant la 1.1.50.
 	cc := make(chan clients, 1)
-	go func() {
-		l, w, tg := s.clientLists(lctx)
-		cc <- clients{l, w, tg}
-	}()
+	if len(skip) == 0 {
+		cc <- clients{}
+	} else {
+		lctx, lcancel := context.WithTimeout(ctx, 45*time.Second)
+		defer lcancel()
+		go func() {
+			l, down, tg := s.clientLists(lctx)
+			cc <- clients{l, tagsWarn(down), tg}
+		}()
+	}
 	entries, err := list()
 	if err != nil {
 		return nil, err
@@ -82,11 +125,10 @@ func (s *Server) lotEntries(ctx context.Context, src source.Source, list func() 
 	for i, e := range entries {
 		paths[i] = e.Path
 	}
-	tags := lotTags(src, paths, c.lists)
-	s.mu.Lock()
-	skip := s.cfg.SkipTagSet()
-	skipList := append([]string{}, s.cfg.SkipTags...)
-	s.mu.Unlock()
+	var tags map[string][]string
+	if c.tagged {
+		tags = lotTags(src, paths, c.lists)
+	}
 	last := journal.LastByPath()
 	out := make([]batchEntry, 0, len(entries))
 	for _, e := range entries {
@@ -150,6 +192,9 @@ func (s *Server) batchStart(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, err)
 		return
 	}
+	// Un client en erreur est retenté en tâche de fond ; s'il n'y en a aucun
+	// qui réponde, chaque publication du lot le retente d'abord (envRetry).
+	s.kickClients()
 	run, err := s.lot.Start(spec)
 	if err != nil {
 		if errors.Is(err, batch.ErrRunning) {

@@ -63,6 +63,7 @@ const ui = {
   relSig: "",
   view: "cross",
   showIgnored: false, // « Pas sur V3X » : réafficher les releases ignorées
+  showMasked: false, // « Autres » : réafficher les lignes masquées
 };
 
 // ---------- utilitaires ----------
@@ -204,10 +205,12 @@ function renderState(s) {
   document.documentElement.dataset.mode = s.mode || "";
   $("#detect").classList.toggle("hidden", s.mode === "docker");
 
-  const ready = s.v3x.ok && clientsReady();
+  // Un client réglé mais en erreur n'empêche plus l'analyse : D3X le retente
+  // à son lancement (Encrypted_Shards, 04/11/26).
+  const ready = s.v3x.ok && clientsSet();
   $("#onboard").classList.toggle("hidden", s.v3x.configured || (s.clients || []).length > 0);
   $("#scan").disabled = !ready;
-  $("#scan").title = ready ? "" : "Règle d'abord V3X et ton client torrent";
+  $("#scan").title = !ready ? "Règle d'abord V3X et ton client torrent" : clientsReady() ? "" : (multiClients() ? "Aucun de tes clients ne répond" : "Ton client ne répond pas") + " pour l'instant : D3X le retente au lancement de l'analyse.";
 
   const up = $("#update");
   if (s.update) {
@@ -255,6 +258,21 @@ function multiClients() {
 // Au moins un client répond.
 function clientsReady() {
   return ((ui.state && ui.state.clients) || []).some((c) => c.ok);
+}
+
+// Au moins un client réglé : une analyse le retente d'abord s'il ne répond pas.
+function clientsSet() {
+  return ((ui.state && ui.state.clients) || []).length > 0;
+}
+
+// Clients retentés par D3X (une fois par minute, trois fois au plus, puis à
+// chaque analyse ou publication) : quand leur état change, le statut le dit
+// et les pastilles sont relues, sans attendre la relecture des 5 minutes.
+let lastClientsGen = null;
+function watchClients(gen) {
+  if (gen === undefined) return;
+  if (lastClientsGen !== null && gen !== lastClientsGen) api("/ui/state").then(renderState).catch(() => { /* rien */ });
+  lastClientsGen = gen;
 }
 
 function kindName(kind) {
@@ -947,6 +965,7 @@ let lastStatus = null;
 
 function renderStatus(st) {
   lastStatus = st;
+  watchClients(st.clientsGen);
   // Un lot tourne dans D3X et attend un MediaInfo : n'importe quel onglet
   // ouvert le calcule (sans binaire mediainfo côté D3X).
   if (st.lot && st.lot.mediainfoWanted && window.lotServeMediaInfo) window.lotServeMediaInfo(st.lot.mediainfoWanted);
@@ -1213,6 +1232,35 @@ function toggleIgnored(r) {
   renderRows();
 }
 
+// Lignes masquées dans « Autres » (Encrypted_Shards, 04/11/26) : pour garder
+// l'onglet propre, une ligne se masque d'un clic et ne revient plus à chaque
+// analyse. Gardé sur l'appareil, par clé de ligne (info-hash du torrent et
+// client, stable d'une analyse à l'autre, même sans fiche V3X).
+let maskCache = null;
+function maskedSet() {
+  if (!maskCache) {
+    try {
+      const v = JSON.parse(localStorage.getItem("d3x-hidden-other") || "[]");
+      maskCache = new Set(Array.isArray(v) ? v.filter((k) => typeof k === "string") : []);
+    } catch (e) {
+      maskCache = new Set();
+    }
+  }
+  return maskCache;
+}
+
+function isMasked(r) {
+  return tabOfRow(r).id === "other" && maskedSet().has(r.key);
+}
+
+function toggleMasked(r) {
+  const s = maskedSet();
+  if (s.has(r.key)) s.delete(r.key);
+  else s.add(r.key);
+  try { localStorage.setItem("d3x-hidden-other", JSON.stringify([...s])); } catch (e) { /* rien */ }
+  renderRows();
+}
+
 // Ignorée depuis Publier (Indrop, 28/10/26) : même liste que le bouton de la
 // ligne, sans repasser par le cross-seed.
 window.xsIgnore = (key) => {
@@ -1379,11 +1427,16 @@ function renderRows() {
   const ign = ignoredSet();
   const isIgnored = (r) => ignorable(r) && ign.has(r.key);
   const nIgnoredIn = {}; // par onglet
+  let nMasked = 0; // lignes masquées de « Autres »
   for (const r of ui.rows) {
     if (isIgnored(r)) {
       const t = tabOfRow(r).id;
       nIgnoredIn[t] = (nIgnoredIn[t] || 0) + 1;
       if (!ui.showIgnored) continue;
+    }
+    if (isMasked(r)) {
+      nMasked++;
+      if (!ui.showMasked) continue;
     }
     const t = tabOfRow(r).id;
     counts[t] = (counts[t] || 0) + 1;
@@ -1397,7 +1450,8 @@ function renderRows() {
   for (const t of TABS) {
     // « Pas sur V3X » reste là tant que des releases y sont ignorées, sinon
     // « Les réafficher » devenait introuvable (Luci, 21/10/26).
-    if (t.id !== "todo" && !counts[t.id] && !nIgnoredIn[t.id]) continue;
+    // De même pour « Autres » tant que des lignes y sont masquées.
+    if (t.id !== "todo" && !counts[t.id] && !nIgnoredIn[t.id] && !(t.id === "other" && nMasked)) continue;
     const b = el("button", "tab");
     b.setAttribute("role", "tab");
     b.setAttribute("aria-selected", String(t.id === ui.tab));
@@ -1410,8 +1464,12 @@ function renderRows() {
     tabs.append(b);
   }
   const tab = TABS.find((t) => t.id === ui.tab) || TABS[0];
-  let list = ui.rows.filter((r) => tabOfRow(r).id === tab.id && (ui.showIgnored || !isIgnored(r)));
+  let list = ui.rows.filter((r) => tabOfRow(r).id === tab.id && (ui.showIgnored || !isIgnored(r)) && (ui.showMasked || !isMasked(r)));
   const before = list.length;
+  const maskLine = $("#mask-line");
+  maskLine.classList.toggle("hidden", tab.id !== "other" || !nMasked);
+  $("#f-show-masked").checked = ui.showMasked;
+  $("#mask-n").textContent = "(" + nMasked + ")";
   renderTrackers(list);
   list = list.filter(filterMatch);
   $("#f-text-n").textContent = list.length < before || ui.filter.trim() ? list.length + " sur " + before : "";
@@ -1461,7 +1519,7 @@ function renderRows() {
     if (dead) parts.push(dead + " " + plural(dead, "release morte", "releases mortes") + " sur V3X");
     if (parts.length) note = parts.join(" et ") + " : en tête de liste, ton seed leur redonne vie et rapporte une prime.";
   }
-  empty.textContent = list.length ? note : tab.empty;
+  empty.textContent = list.length ? note : tab.id === "other" && nMasked && !ui.showMasked ? "Toutes les releases de cet onglet sont masquées." : tab.empty;
   empty.classList.toggle("hidden", !empty.textContent);
   const more = $("#more");
   if (list.length > ui.shown) {
@@ -1619,6 +1677,17 @@ function rowEl(r) {
     const b = el("button", "btn small", "Retirer du client");
     b.title = "Retire ce torrent de ton client. Tes fichiers ne sont pas touchés.";
     b.addEventListener("click", () => removeRow(r, b));
+    box.append(b);
+  }
+  if (tabOfRow(r).id === "other") {
+    const masked = isMasked(r);
+    if (masked) tr.classList.add("masked");
+    const b = el("button", "btn small", masked ? "Réafficher" : "Masquer");
+    b.type = "button";
+    b.title = masked
+      ? "La ligne revient dans « Autres »."
+      : "Cache cette ligne de « Autres » sur cet appareil : elle ne revient plus à chaque analyse. « Afficher les masquées » la montre de nouveau.";
+    b.addEventListener("click", () => toggleMasked(r));
     box.append(b);
   }
   tdE.append(box);
@@ -1948,6 +2017,10 @@ async function boot() {
   });
   $("#ign-toggle").addEventListener("click", () => {
     ui.showIgnored = !ui.showIgnored;
+    renderRows();
+  });
+  $("#f-show-masked").addEventListener("change", (ev) => {
+    ui.showMasked = ev.target.checked;
     renderRows();
   });
   $("#scan").addEventListener("click", async () => {

@@ -552,3 +552,90 @@ func TestProcessPolicy(t *testing.T) {
 		t.Errorf("fiche gardée : %+v, %d démarrages", en, p.starts)
 	}
 }
+
+// Lot lancé sur un disque rangé par une médiathèque (Ekhstaz, 04/11/26) : la
+// release part sous le nom de sa vidéo quand le dossier n'en a pas un, et
+// celle qui n'a de nom de release nulle part n'est jamais prise, même envoyée
+// par la page, sauf avec une fiche gardée depuis Publier (nom choisi à la main).
+func TestProcessReleaseName(t *testing.T) {
+	const video = "1917.2019.MULTi.1080p.BluRay.x264-GROUPE"
+	media := releases.Entry{Name: "1917 (2019)", Path: "/r/1917 (2019)", Video: true, Size: 5 << 30, ReleaseName: video}
+	bad := releases.Entry{Name: "21 Grams (2003) [ImdbID-tt0315733]", Path: "/r/21 Grams (2003) [ImdbID-tt0315733]", Video: true, Size: 5 << 30, BadName: releases.BadNameDir}
+	ready := releases.Entry{Name: "300 (2007)", Path: "/r/300 (2007)", Video: true, Size: 5 << 30, BadName: releases.BadNameDir}
+	done := releases.Entry{Name: "28 Days Later (2002)", Path: "/r/28 Days Later (2002)", Video: true, Size: 5 << 30, BadName: releases.BadNameDir}
+
+	d, p := happy(media, bad, ready, done)
+	p.make = func(path string) *publish.Job {
+		j := videoJob(path)
+		if path == media.Path {
+			j.NameFromVideo = video
+		}
+		return j
+	}
+	d.last = map[string]journal.Event{
+		ready.Path: {Kind: "batch_ready"},
+		done.Path:  {Kind: "published", Detail: "publiée · Films ▸ Film · 28 Days Later (2002)"},
+	}
+	d.prepared = func(key string) (*Prepared, bool) {
+		if key != ready.Path {
+			return nil, false
+		}
+		return &Prepared{Name: "300", Summary: "Films ▸ Film · 300 (2007)", Fields: map[string]string{"releaseName": "300.2007.MULTi.1080p.BluRay.x264-GRP", "categoryId": "11"}}, true
+	}
+	var mu sync.Mutex
+	var names []string
+	d.policy = func(q PolicyQuery) (*PolicyStop, error) {
+		mu.Lock()
+		names = append(names, q.Names...)
+		mu.Unlock()
+		return nil, nil
+	}
+	e := quick(d)
+	r, err := e.Start(Spec{Dir: "/r", Source: "local", Paths: []string{media.Path, bad.Path, ready.Path, done.Path}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Total != 2 {
+		t.Fatalf("total %d, attendu 2 (la release sans nom de release n'en fait pas partie)", r.Total)
+	}
+	r = waitDone(t, e)
+	got := map[string]*Entry{}
+	for _, en := range r.Entries {
+		got[en.Path] = en
+	}
+	if en := got[bad.Path]; en.State != "pending" || en.Detail != releases.BadNameDir {
+		t.Errorf("sans nom de release : %+v", en)
+	}
+	if en := got[done.Path]; en.State != "published" || en.Detail != "publiée · Films ▸ Film · 28 Days Later (2002)" {
+		t.Errorf("déjà publiée : son détail reste le sien : %+v", en)
+	}
+	if en := got[media.Path]; en.State != "published" {
+		t.Errorf("dossier de médiathèque : %+v", en)
+	}
+	if f := p.fields["job-"+media.Path]; f["releaseName"] != video {
+		t.Errorf("nom publié %q, attendu celui de la vidéo", f["releaseName"])
+	}
+	if len(p.inputs) == 0 || p.inputs[0].ReleaseName != video {
+		t.Errorf("fiche demandée sous %+v", p.inputs)
+	}
+	if en := got[ready.Path]; en.State != "published" || p.fields["job-"+ready.Path]["releaseName"] != "300.2007.MULTi.1080p.BluRay.x264-GRP" {
+		t.Errorf("fiche gardée : %+v", en)
+	}
+	if p.starts != 2 {
+		t.Errorf("%d publications démarrées, attendu 2", p.starts)
+	}
+	for _, ev := range d.eventsCopy() {
+		if ev.Path == bad.Path {
+			t.Errorf("rien au journal pour la release sans nom : %+v", ev)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	found := false
+	for _, n := range names {
+		found = found || n == video
+	}
+	if !found {
+		t.Errorf("le nom de la vidéo ne passe pas la règle de réupload : %v", names)
+	}
+}

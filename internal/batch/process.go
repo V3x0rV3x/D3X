@@ -150,7 +150,9 @@ func (e *Engine) process(l *lot, en *Entry) {
 		e.decide(src, en, "review", "dossier sans fichier à sa racine (collection, plusieurs releases ?)", "")
 		return
 	}
-	if e.policyStopped(l, en) {
+	// Le nom repris de la vidéo passe aussi la règle : c'est lui qui porte le
+	// tag du groupe quand le dossier n'en a pas.
+	if e.policyStopped(l, en, en.ReleaseName) {
 		return
 	}
 
@@ -187,6 +189,11 @@ func (e *Engine) process(l *lot, en *Entry) {
 		return
 	}
 	name := stripExt(j.Name, j.Single)
+	// Dossier rangé par une médiathèque (Ekhstaz, 04/11/26) : le nom de sa
+	// vidéo principale, comme le propose Publier, et non « Film (2003) [ImdbID-…] ».
+	if j.NameFromVideo != "" {
+		name = j.NameFromVideo
+	}
 	album := j.Audio != nil && len(j.Audio.Tracks) > 0 && !en.Video
 
 	cx, err := e.deps.Context(ctx)

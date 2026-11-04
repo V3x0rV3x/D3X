@@ -20,7 +20,7 @@ const lot = {
   calmUntil: 0, // « Lancer le lot » grisé jusque-là, juste après la fin d'un lot
   skipTags: [], // réglage « Étiquettes à ne jamais publier », tel que D3X le rend
   skipSet: new Set(), // le même, en minuscules
-  tagged: false, // au moins un client réglé : la colonne « Étiquettes » s'affiche
+  tagged: false, // étiquettes à ne jamais publier réglées et au moins un client : la colonne « Étiquettes » s'affiche
   tagsWarn: "", // un client n'a pas répondu : ses étiquettes manquent
 };
 
@@ -44,12 +44,39 @@ const LOT_STATE_OF_KIND = { published: "published", batch_ready: "ready", batch_
 function lotEntries(list, hits) {
   return list.map((e) => {
     const st = e.error ? "error" : (e.last && LOT_STATE_OF_KIND[e.last.kind]) || "pending";
-    const detail = e.error || (e.last && e.last.detail) || "";
-    // Écartée par une étiquette : la raison remplace le détail d'une release que
-    // le lot aurait prise ; une release déjà publiée (ou présente) garde le sien.
     const takable = st === "pending" || st === "ready" || st === "review" || st === "simulated";
-    return { ...e, state: st, detail: e.skipped && takable ? skipDetail(e.tags) : detail, checked: !e.skipped && takable, requests: (hits && hits[e.path]) || null };
+    const blocked = lotBlocked({ badName: e.badName, state: st });
+    // Écartée par une étiquette ou sans nom de release : la raison remplace le
+    // détail d'une release que le lot aurait prise ; une release déjà publiée
+    // (ou présente) garde le sien. L'étiquette passe avant le nom, comme dans
+    // D3X : renommer ne la rendrait pas au lot.
+    let detail = e.error || (e.last && e.last.detail) || "";
+    if (takable && e.skipped) detail = skipDetail(e.tags);
+    else if (takable && blocked) detail = e.badName;
+    return { ...e, state: st, detail, checked: takable && !e.skipped && !blocked, requests: (hits && hits[e.path]) || null };
   });
+}
+
+// Lot lancé sur un disque rangé par une médiathèque (Ekhstaz, 04/11/26) : une
+// vidéo dont ni le dossier ni la vidéo principale n'ont un nom de release
+// (« 21 Grams (2003) [ImdbID-tt0315733] ») reste affichée, grisée, jamais
+// cochable ; D3X la saute aussi de son côté. Une fiche gardée depuis Publier
+// (« Prête ») porte le nom choisi à la main : elle passe.
+function lotBlocked(e) {
+  return !!e.badName && e.state !== "ready";
+}
+
+// lotOff : la release n'est jamais cochable (étiquette à ne jamais publier,
+// ou pas de nom de release).
+function lotOff(e) {
+  return !!e.skipped || lotBlocked(e);
+}
+
+// offDetail : le détail d'une release remise « En attente » : la raison qui
+// l'écarte, s'il y en a une, sinon rien.
+function offDetail(e) {
+  if (e.skipped) return skipDetail(e.tags);
+  return lotBlocked(e) ? e.badName : "";
 }
 
 // lotTake garde ce que la liste dit des clients : le réglage des étiquettes à
@@ -61,9 +88,12 @@ function lotTake(r) {
   lot.tagsWarn = r.tagsWarn || "";
 }
 
-// skipDetail : la raison d'une release écartée, comme D3X l'écrit pendant un lot.
+// skipDetail : la raison d'une release écartée, comme D3X l'écrit pendant un
+// lot. Réglage pas encore relu (page rouverte sur un lot en cours) : la
+// raison sans le nom de l'étiquette, plutôt qu'un nom vide.
 function skipDetail(tags) {
   const bad = (tags || []).filter((t) => lot.skipSet.has(t.trim().toLowerCase()));
+  if (!bad.length) return "étiquette à ne jamais publier dans ton client : jamais publiée par un lot";
   return (bad.length > 1 ? "étiquettes " : "étiquette ") + bad.join(", ") + " dans ton client : jamais publiée par un lot";
 }
 
@@ -229,7 +259,7 @@ function lotRender() {
   const help = LOT_TABS.find((t) => t[0] === lot.tab);
   empty.textContent = list.length ? "" : "Rien ici. " + (help ? help[2] : "");
   empty.classList.toggle("hidden", list.length > 0);
-  const checkable = list.filter((e) => !e.skipped && e.state !== "published" && e.state !== "duplicate" && e.state !== "error");
+  const checkable = list.filter((e) => !lotOff(e) && e.state !== "published" && e.state !== "duplicate" && e.state !== "error");
   $("#b-all").checked = checkable.length > 0 && checkable.every((e) => e.checked);
   $("#b-all").disabled = lot.running || checkable.length === 0;
   // Pendant un lot, ses options et le choix du dossier sont figés : un
@@ -259,8 +289,8 @@ async function lotReset() {
   const list = lotResettable();
   for (const e of list) {
     e.state = "pending";
-    e.detail = e.skipped ? skipDetail(e.tags) : "";
-    e.checked = !e.skipped;
+    e.detail = offDetail(e);
+    e.checked = !lotOff(e);
     try { await api("/ui/batch/decision", { path: e.path, source: lot.source, name: e.name, kind: "batch_reset", detail: "" }); } catch (err) { /* rien */ }
   }
   lot.tab = "pending";
@@ -269,14 +299,22 @@ async function lotReset() {
 }
 
 function lotRow(e) {
-  const tr = el("tr", ((e.path === lot.current ? "current" : "") + (e.skipped ? " skipped" : "")).trim());
-  if (e.skipped) tr.title = skipDetail(e.tags); // même déjà publiée : l'infobulle dit pourquoi la ligne est grisée
+  const off = lotOff(e);
+  const tr = el("tr", e.path === lot.current ? "current" : "");
+  // Même déjà publiée : l'infobulle dit pourquoi la ligne est grisée.
+  if (e.skipped) {
+    tr.classList.add("skipped");
+    tr.title = skipDetail(e.tags);
+  } else if (lotBlocked(e)) {
+    tr.classList.add("noname");
+    tr.title = e.badName;
+  }
   const td = el("td", "c-check");
   if (e.state !== "published" && e.state !== "duplicate" && e.state !== "error") {
     const cb = el("input");
     cb.type = "checkbox";
-    cb.checked = e.checked && !e.skipped;
-    cb.disabled = lot.running || e.skipped;
+    cb.checked = e.checked && !off;
+    cb.disabled = lot.running || off;
     cb.setAttribute("aria-label", "Inclure " + e.name);
     cb.addEventListener("change", () => { e.checked = cb.checked; lotBar(); });
     td.append(cb);
@@ -284,6 +322,9 @@ function lotRow(e) {
   tr.append(td);
   const name = el("td");
   name.append(el("div", "name", e.name));
+  // Dossier rangé par une médiathèque : le lot la publie sous le nom de sa
+  // vidéo, comme Publier le propose.
+  if (e.releaseName && (e.state === "pending" || e.state === "review" || e.state === "simulated")) name.append(el("div", "sub", "Nom de release repris de sa vidéo : " + e.releaseName));
   const tags = [];
   if (e.files > 1) tags.push(e.files + " fichiers");
   if (e.audio) tags.push("album");
@@ -347,7 +388,7 @@ function lotBar() {
   const show = $("#view-batch") && !$("#view-batch").classList.contains("hidden") && lot.entries.length > 0;
   bar.classList.toggle("hidden", !show);
   if (!show) return;
-  const checked = lot.entries.filter((e) => e.checked && !e.skipped && (e.state === "pending" || e.state === "ready" || e.state === "review" || e.state === "simulated"));
+  const checked = lot.entries.filter((e) => e.checked && !lotOff(e) && (e.state === "pending" || e.state === "ready" || e.state === "review" || e.state === "simulated"));
   const n = checked.length;
   // Les cases restent cochées d'un onglet à l'autre et le lot les prend
   // toutes : on dit combien sont dans l'onglet ouvert, et « Tout décocher »
@@ -382,7 +423,7 @@ function lotProgress(label, detail) {
 async function decide(e, state, detail) {
   e.state = state;
   e.detail = detail || "";
-  e.checked = !e.skipped && (state === "review" || state === "simulated");
+  e.checked = !lotOff(e) && (state === "review" || state === "simulated");
   const kind = { review: "batch_review", simulated: "batch_simulated", duplicate: "batch_duplicate", ignored: "batch_ignored", error: "batch_error" }[state];
   if (kind) {
     try { await api("/ui/batch/decision", { path: e.path, source: lot.source, name: e.name, kind, detail: e.detail }); } catch (err) { /* rien */ }
@@ -393,8 +434,8 @@ async function decide(e, state, detail) {
 async function lotIgnore(e) {
   if (e.state === "ignored") {
     e.state = "pending";
-    e.detail = e.skipped ? skipDetail(e.tags) : "";
-    e.checked = !e.skipped;
+    e.detail = offDetail(e);
+    e.checked = !lotOff(e);
     try { await api("/ui/batch/decision", { path: e.path, source: lot.source, name: e.name, kind: "batch_unignored", detail: "" }); } catch (err) { /* rien */ }
     lotRender();
     return;
@@ -444,7 +485,7 @@ async function lotRun(ev) {
   if (!pub.ctx) return toast("Publication impossible : " + (pub.ctxError || "V3X injoignable"), "bad");
   // Seulement ce qui est coché ET affiché à l'écran : un dossier apparu entre-temps
   // n'est jamais publié sans avoir été vu.
-  const todo = lot.entries.filter((e) => e.checked && !e.skipped && (e.state === "pending" || e.state === "ready" || e.state === "review" || e.state === "simulated"));
+  const todo = lot.entries.filter((e) => e.checked && !lotOff(e) && (e.state === "pending" || e.state === "ready" || e.state === "review" || e.state === "simulated"));
   if (!todo.length) return;
   try {
     // D3X refuse une demande faite pour un lancement d'avant le sien.
@@ -513,9 +554,6 @@ function applyRun(run) {
     // est celle du lot ; une liste choisie dans Cross-seed ou un autre
     // dossier ne reçoit rien d'étranger.
     const ours = adopted || (run.dir === lot.dir && !lot.picked);
-    // Seulement pendant le lot, et pour sa liste : un lot fini ne ramène pas
-    // son avertissement sur une autre liste.
-    if (ours && run.tagsWarn) lot.tagsWarn = run.tagsWarn;
     const byPath = new Map(lot.entries.map((e) => [e.path, e]));
     for (const re of run.entries) {
       let e = byPath.get(re.path);
@@ -560,9 +598,11 @@ function overlayEntry(e, re, active) {
   if (re.requests) e.requests = re.requests;
   if (re.tags) e.tags = re.tags;
   e.skipped = !!re.skipped;
+  // Les noms lus par D3X au démarrage du lot font foi.
+  e.badName = re.badName || "";
+  e.releaseName = re.releaseName || "";
   if (active) e.checked = false;
-  else e.checked = re.state === "review" || re.state === "simulated";
-  if (e.skipped) e.checked = false;
+  else e.checked = !lotOff(e) && (re.state === "review" || re.state === "simulated");
 }
 
 // Dossier d'un lot repris par une page rouverte : relu en entier, puis le
@@ -659,15 +699,19 @@ async function lotRefresh() {
   const before = new Map(lot.entries.map((e) => [e.path, e]));
   const hits = {};
   for (const e of lot.entries) if (e.requests) hits[e.path] = e.requests;
+  // La liste relue ne vaut que pour celle d'où elle part : un autre dossier
+  // listé (ou d'autres releases choisies) entre-temps, la réponse est jetée,
+  // comme dans lotAdoptFolder.
+  const { dir, picked, source, entries } = lot;
   try {
-    const r = lot.picked
-      ? await api("/ui/batch/entries", { paths: lot.entries.map((e) => e.path), source: lot.source })
-      : await api("/ui/batch/list?source=" + lot.source + "&path=" + encodeURIComponent(lot.dir));
-    if (lot.running) return;
+    const r = picked
+      ? await api("/ui/batch/entries", { paths: entries.map((e) => e.path), source })
+      : await api("/ui/batch/list?source=" + source + "&path=" + encodeURIComponent(dir));
+    if (lot.running || lot.dir !== dir || lot.picked !== picked || lot.source !== source || lot.entries !== entries) return;
     lotTake(r);
     lot.entries = lotEntries(r.entries, hits).map((e) => {
       const old = before.get(e.path);
-      return old && old.state === e.state ? { ...e, checked: old.checked && !e.skipped } : e;
+      return old && old.state === e.state ? { ...e, checked: old.checked && !lotOff(e) } : e;
     });
     lotRender();
   } catch (e) {
@@ -701,7 +745,7 @@ function bindBatch() {
   });
   $("#b-reset").addEventListener("click", lotReset);
   $("#b-all").addEventListener("change", (ev) => {
-    for (const e of lot.entries) if (!e.skipped && e.state === lot.tab && e.state !== "published" && e.state !== "duplicate" && e.state !== "error") e.checked = ev.target.checked;
+    for (const e of lot.entries) if (!lotOff(e) && e.state === lot.tab && e.state !== "published" && e.state !== "duplicate" && e.state !== "error") e.checked = ev.target.checked;
     lotRender();
   });
 }

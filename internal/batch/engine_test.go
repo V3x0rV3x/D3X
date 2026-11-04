@@ -29,7 +29,7 @@ type fakeDeps struct {
 	linksSet map[string]bool
 	linksErr error
 	tags     map[string][]string
-	tagsWarn string
+	tagsErr  error
 	skipTags map[string]bool
 	tagsAsk  []string // les chemins demandés à Tags
 
@@ -60,11 +60,11 @@ func (d *fakeDeps) PubSetLinks(id string, on bool) error {
 	d.linksSet[id] = on
 	return d.linksErr
 }
-func (d *fakeDeps) Tags(_ context.Context, _ source.Source, paths []string) (map[string][]string, string) {
+func (d *fakeDeps) Tags(_ context.Context, _ source.Source, paths []string) (map[string][]string, error) {
 	d.mu.Lock()
 	d.tagsAsk = append([]string(nil), paths...)
 	d.mu.Unlock()
-	return d.tags, d.tagsWarn
+	return d.tags, d.tagsErr
 }
 func (d *fakeDeps) SkipTags() map[string]bool { return d.skipTags }
 
@@ -417,7 +417,7 @@ func TestEngineSeedLater(t *testing.T) {
 // Une release couverte par un torrent dont l'étiquette est à ne jamais publier
 // (noHL) reste dans son état, hors du total, jamais traitée, même envoyée par
 // la page ; la casse ne compte pas ; une étiquette d'un autre torrent sans
-// l'étiquette n'y change rien ; rien au journal ; un client muet est dit.
+// l'étiquette n'y change rien ; rien au journal.
 func TestEngineSkipTags(t *testing.T) {
 	d := &fakeDeps{
 		entries: []releases.Entry{
@@ -428,7 +428,6 @@ func TestEngineSkipTags(t *testing.T) {
 		},
 		last:     map[string]journal.Event{"/r/Deja": {Kind: "batch_review", Detail: "catégorie à choisir"}, "/r/Publiee": {Kind: "published", Detail: "publiée · Films ▸ Film"}},
 		tags:     map[string][]string{"/r/NoHL": {"cross-seed", "NOHL", "V3X"}, "/r/Libre": {"V3X"}, "/r/Deja": {"Inactive", "LastSeed"}, "/r/Publiee": {"noHL"}},
-		tagsWarn: "Étiquettes non lues : Seedbox injoignable",
 		skipTags: map[string]bool{"nohl": true, "lastseed": true, "inactive": true},
 	}
 	e := New(d)
@@ -436,8 +435,8 @@ func TestEngineSkipTags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Total != 1 || r.TagsWarn != d.tagsWarn {
-		t.Fatalf("démarrage : total %d, avertissement %q", r.Total, r.TagsWarn)
+	if r.Total != 1 {
+		t.Fatalf("démarrage : total %d", r.Total)
 	}
 	// Les chemins des releases listées, pas ceux envoyés par la page.
 	if strings.Join(d.tagsAsk, " ") != "/r/NoHL /r/Libre /r/Deja /r/Publiee" {
@@ -460,5 +459,36 @@ func TestEngineSkipTags(t *testing.T) {
 	}
 	if k := d.kinds(); k["/r/NoHL"] != "" || k["/r/Deja"] != "" || k["/r/Libre"] != "batch_review" {
 		t.Errorf("journal : %v (rien pour une écartée)", k)
+	}
+}
+
+// Revue du 04/11/26 : sans étiquette à ne jamais publier, les clients ne sont
+// pas lus au démarrage (comme avant) ; avec, un client dont les étiquettes
+// manquent empêche le lot de partir, au lieu de publier à l'aveugle ce qu'il
+// aurait écarté.
+func TestEngineSkipTagsUnread(t *testing.T) {
+	entries := []releases.Entry{{Name: "A", Path: "/r/A", Exec: true, Size: 10}}
+
+	d := &fakeDeps{entries: entries, tagsErr: errors.New("ne doit pas être demandé")}
+	e := New(d)
+	if _, err := e.Start(Spec{Dir: "/r", Source: "local", Paths: []string{"/r/A"}}); err != nil {
+		t.Fatalf("sans étiquette réglée : %v", err)
+	}
+	waitDone(t, e)
+	if d.tagsAsk != nil {
+		t.Fatalf("étiquettes lues sans réglage : %v", d.tagsAsk)
+	}
+
+	refus := errors.New("Étiquettes à ne jamais publier : le client Seedbox ne répond pas, le lot ne part pas tant qu'on ne peut pas lire ses étiquettes")
+	d = &fakeDeps{entries: entries, tagsErr: refus, skipTags: map[string]bool{"nohl": true}}
+	e = New(d)
+	if r, err := e.Start(Spec{Dir: "/r", Source: "local", Paths: []string{"/r/A"}}); err != refus || r != nil {
+		t.Fatalf("client muet : %v, %+v", err, r)
+	}
+	if e.State() != nil || e.Running() {
+		t.Fatal("un lot est parti sans les étiquettes d'un client")
+	}
+	if k := d.kinds(); len(k) != 0 {
+		t.Errorf("journal : %v", k)
 	}
 }

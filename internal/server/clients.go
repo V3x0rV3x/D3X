@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/V3x0rV3x/D3X/internal/config"
 	"github.com/V3x0rV3x/D3X/internal/crossseed"
 	"github.com/V3x0rV3x/D3X/internal/pathmap"
+	"github.com/V3x0rV3x/D3X/internal/qbit"
 )
 
 // Plusieurs clients torrent (une seedbox et ce PC, par exemple). Chacun est
@@ -26,6 +28,13 @@ type clientConn struct {
 	c   client.Client
 	ver string // « qBittorrent v5.0.2 »
 	err string
+	// at : fin de cette tentative. auth : refusé sur ses identifiants (ou
+	// réglage illisible) : jamais retenté seul, qBittorrent bloquerait
+	// l'adresse après quelques échecs. auto : tentatives automatiques faites
+	// depuis le dernier geste du membre (clientRetryLoop).
+	at   time.Time
+	auth bool
+	auto int
 }
 
 // connSig : ce qui, dans les réglages d'un client, change sa connexion.
@@ -36,21 +45,31 @@ func connSig(cc config.ClientConfig) string {
 // dial ouvre un client et vérifie qu'il répond.
 func dial(ctx context.Context, cc config.ClientConfig) *clientConn {
 	k := &clientConn{sig: connSig(cc)}
+	defer func() { k.at = time.Now() }()
 	c, err := client.New(client.Options{Kind: cc.Kind, URL: cc.URL, User: cc.User, Pass: cc.Pass, Insecure: cc.Insecure})
 	if err != nil {
-		k.err = err.Error()
+		k.err, k.auth = err.Error(), true
 		return k
 	}
 	ver, err := c.Version(ctx)
 	if err != nil {
-		k.err = crossseed.Reason(err)
+		k.err, k.auth = crossseed.Reason(err), authRefused(err)
 		if ctx.Err() != nil {
-			k.err = crossseed.NoAnswer
+			k.err, k.auth = crossseed.NoAnswer, false
 		}
 		return k
 	}
 	k.c, k.ver = c, strings.TrimSpace(c.Kind()+" "+ver)
 	return k
+}
+
+// authRefused : le client a refusé les identifiants (ou bloqué l'adresse après
+// trop d'échecs). Tous ces messages parlent du mot de passe.
+func authRefused(err error) bool {
+	if errors.Is(err, client.ErrAuth) || errors.Is(err, qbit.ErrAuth) {
+		return true
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "mot de passe")
 }
 
 // dialAll essaie tous les clients donnés en même temps.
@@ -74,16 +93,68 @@ func dialAll(ctx context.Context, list []config.ClientConfig) map[string]*client
 	return out
 }
 
-// retryClients retente les clients injoignables (début d'une analyse) : le
-// client d'une seedbox redémarré depuis le lancement de D3X revient sans
-// passer par les réglages.
-func (s *Server) retryClients(ctx context.Context) {
+// Nouvelle tentative sur un client injoignable (Encrypted_Shards, 04/11/26 :
+// client en rouge, à retester dans les Réglages avant chaque analyse ou
+// publication). maxAutoRetries : tentatives automatiques avant de s'arrêter
+// jusqu'au prochain geste du membre.
+const maxAutoRetries = 3
+
+// Délais en nanosecondes, atomiques comme v3xRetryEvery (raccourcis dans les
+// tests). retryGap : un client qui vient d'échouer n'est pas redemandé avant
+// ce délai par un geste du membre, un client éteint ne ralentit pas chaque
+// publication. clientRetryEvery : entre deux tentatives automatiques.
+var retryGap, clientRetryEvery atomic.Int64
+
+func init() {
+	retryGap.Store(int64(20 * time.Second))
+	clientRetryEvery.Store(int64(time.Minute))
+}
+
+// retryClients retente les clients injoignables avant un travail lancé par le
+// membre (analyse, Médiathèque, publication, lot) : le client d'une seedbox
+// redémarré depuis le lancement de D3X revient sans passer par les réglages.
+// Les tentatives automatiques repartent de zéro.
+func (s *Server) retryClients(ctx context.Context) { s.retryDown(ctx, true) }
+
+// clientRetryLoop : un client réglé mais injoignable (lancé après D3X, NAS ou
+// seedbox qui redémarre) est retenté seul une fois par minute, trois fois au
+// plus ; ensuite plus rien jusqu'au prochain geste du membre. Jamais un client
+// qui a refusé ses identifiants.
+func (s *Server) clientRetryLoop() {
+	for {
+		time.Sleep(time.Duration(clientRetryEvery.Load()))
+		s.retryDown(context.Background(), false)
+	}
+}
+
+// retryDown rejoint les clients injoignables. user : geste du membre (tout
+// client pas joint, sauf un échec de moins de retryGap) ; sinon tentative
+// automatique (échec réseau seulement, maxAutoRetries au plus). Une tentative
+// à la fois : les autres attendent, puis trouvent l'échec tout frais.
+func (s *Server) retryDown(ctx context.Context, user bool) {
+	s.retryMu.Lock()
+	defer s.retryMu.Unlock()
+	now := time.Now()
 	s.mu.Lock()
 	var todo []config.ClientConfig
+	was := map[string]*clientConn{}
 	for _, cc := range s.cfg.Clients {
-		if k := s.conns[cc.ID]; k == nil || k.c == nil || k.sig != connSig(cc) {
-			todo = append(todo, cc)
+		k := s.conns[cc.ID]
+		same := k != nil && k.sig == connSig(cc)
+		switch {
+		case same && k.c != nil: // joint
+			continue
+		case user && same:
+			k.auto = 0
+			if now.Sub(k.at) < time.Duration(retryGap.Load()) {
+				continue
+			}
+		case user: // jamais tenté, ou réglages changés
+		case !same || k.auth || k.auto >= maxAutoRetries:
+			continue
 		}
+		todo = append(todo, cc)
+		was[cc.ID] = k
 	}
 	s.mu.Unlock()
 	if len(todo) == 0 {
@@ -97,11 +168,58 @@ func (s *Server) retryClients(ctx context.Context) {
 	if s.conns == nil {
 		s.conns = map[string]*clientConn{}
 	}
+	changed := false
 	for id, k := range got {
-		// Réglages changés entre-temps : le résultat ne vaut plus.
-		if cc := s.cfg.Client(id); cc != nil && connSig(*cc) == k.sig {
-			s.conns[id] = k
+		old := was[id]
+		// Réglages changés, ou client rejoint autrement entre-temps (Réglages
+		// enregistrés) : le résultat ne vaut plus.
+		if cc := s.cfg.Client(id); cc == nil || connSig(*cc) != k.sig || s.conns[id] != old {
+			continue
 		}
+		if !user && old != nil {
+			k.auto = old.auto + 1
+		}
+		s.conns[id] = k
+		changed = true
+	}
+	if changed {
+		s.connGen.Add(1)
+	}
+}
+
+// clientsDown : V3X est joint et au moins un client réglé ne l'est pas.
+func (s *Server) clientsDown() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.v == nil || s.me == nil {
+		return false
+	}
+	for _, cc := range s.cfg.Clients {
+		if k := s.conns[cc.ID]; k == nil || k.c == nil || k.sig != connSig(cc) {
+			return true
+		}
+	}
+	return false
+}
+
+// envRetry : env pour la publication ; si aucun client ne répond, ils sont
+// d'abord retentés, au lieu d'échouer sur un client passé en erreur depuis.
+func (s *Server) envRetry() (*crossseed.Env, error) {
+	env, err := s.env()
+	if err == nil || !s.clientsDown() {
+		return env, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	s.retryClients(ctx)
+	return s.env()
+}
+
+// kickClients : un geste du membre (Publier, lot) retente en tâche de fond un
+// client injoignable, sans le faire attendre ; sa pastille suit.
+func (s *Server) kickClients() {
+	if s.clientsDown() {
+		go s.retryClients(context.Background())
 	}
 }
 

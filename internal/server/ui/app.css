@@ -596,3 +596,7 @@ dialog .confirm dd { margin: 0; word-break: break-word; }
 .tracker-chips .chip .n { color: var(--muted); font-variant-numeric: tabular-nums; }
 .tracker-chips .chip.off { opacity: .55; }
 .tracker-chips .chip.off .txt { text-decoration: line-through; }
+/* Lot : release sans nom de release, grisée ; « Revoir » reste net (Ekhstaz, 04/11/26). */
+.rows tr.noname td:not(:last-child) { opacity: .55; }
+/* Cross-seed ▸ Autres : ligne masquée réaffichée (Encrypted_Shards, 04/11/26). */
+.rows tr.masked td:not(:last-child) { opacity: .55; }

@@ -89,18 +89,27 @@ func (e *Engine) Start(spec Spec) (*Run, error) {
 		return nil, err
 	}
 	last := e.deps.LastByPath()
-	paths := make([]string, len(list))
-	for i, x := range list {
-		paths[i] = x.Path
-	}
 	// Les étiquettes des torrents qui couvrent chaque release, relues ici
 	// quoi qu'ait vu la page : une écartée envoyée quand même est retenue. Un
-	// délai à part : la liste du dossier (SSH) a pu prendre le sien.
-	tctx, tcancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	tags, warn := e.deps.Tags(tctx, src, paths)
-	tcancel()
+	// délai à part : la liste du dossier (SSH) a pu prendre le sien. Sans
+	// étiquette à ne jamais publier, rien n'est lu (comme avant la 1.1.50) ;
+	// avec, un client dont les étiquettes manquent arrête tout : le lot ne
+	// publie pas à l'aveugle ce que ce client aurait écarté.
 	skip := e.deps.SkipTags()
-	r := &Run{Dir: spec.Dir, Source: spec.Source, Options: spec.Options, State: StRunning, StartedAt: time.Now(), TagsWarn: warn}
+	var tags map[string][]string
+	if len(skip) > 0 {
+		paths := make([]string, len(list))
+		for i, x := range list {
+			paths[i] = x.Path
+		}
+		tctx, tcancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		tags, err = e.deps.Tags(tctx, src, paths)
+		tcancel()
+		if err != nil {
+			return nil, err
+		}
+	}
+	r := &Run{Dir: spec.Dir, Source: spec.Source, Options: spec.Options, State: StRunning, StartedAt: time.Now()}
 	for _, x := range list {
 		en := &Entry{Entry: x, State: "pending", Tags: tags[x.Path]}
 		if ev, ok := last[src.Key(x.Path)]; ok {
@@ -113,11 +122,19 @@ func (e *Engine) Start(spec Spec) (*Run, error) {
 		if x.Error != "" {
 			en.State, en.Detail = "error", x.Error
 		}
+		// Pas de nom de release (Ekhstaz, 04/11/26) : relu ici sur le disque,
+		// quoi qu'envoie la page. La release garde son état, grisée, et le lot
+		// ne la prend pas (todo) ; rien au journal, la renommer la rend au lot.
+		// La raison remplace le détail d'une release que le lot aurait prise.
+		if badName(en) && takable(en.State) {
+			en.Detail = en.BadName
+		}
 		// Étiquette à ne jamais publier : la release garde son état, grisée,
 		// et le lot ne la prend pas (todo). Rien au journal : ce n'est pas une
 		// décision du membre, l'étiquette retirée dans le client la rend au lot.
 		// La raison remplace le détail d'une release que le lot aurait prise ;
 		// une release déjà publiée (ou présente, ignorée, illisible) garde le sien.
+		// Elle passe avant celle du nom : renommer ne la rendrait pas au lot.
 		if bad := SkippedBy(en.Tags, skip); bad != "" {
 			en.Skipped = true
 			if takable(en.State) {
@@ -147,8 +164,8 @@ func (e *Engine) Start(spec Spec) (*Run, error) {
 
 // todo : la release est à traiter (comme la page : cochée et dans un état
 // qui le permet ; ici, cochée = envoyée par la page). Jamais une release
-// écartée par une étiquette de son torrent.
-func todo(en *Entry) bool { return !en.Skipped && takable(en.State) }
+// écartée par une étiquette de son torrent, ni une release sans nom de release.
+func todo(en *Entry) bool { return !en.Skipped && !badName(en) && takable(en.State) }
 
 // takable : un état dans lequel un lot prend la release.
 func takable(state string) bool {
@@ -158,6 +175,11 @@ func takable(state string) bool {
 	}
 	return false
 }
+
+// badName : ni le dossier (ou le fichier) ni sa vidéo principale n'ont un nom
+// de release (releases.Entry.BadName). Une fiche gardée depuis Publier
+// (« Prête ») porte le nom choisi à la main : elle passe.
+func badName(en *Entry) bool { return en.BadName != "" && en.State != "ready" }
 
 // Stop arrête le lot : l'attente en cours est coupée, l'étape en cours se
 // termine proprement, aucune release suivante n'est prise.

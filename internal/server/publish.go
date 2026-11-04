@@ -110,6 +110,9 @@ func (s *Server) pubStart(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, err)
 		return
 	}
+	// Un client en erreur est retenté (aucun ne répond : avant, par envRetry ;
+	// l'un d'eux seulement : en tâche de fond, sans faire attendre la page).
+	s.kickClients()
 	j, err := s.pub.Start(src, in.Path)
 	if err != nil {
 		fail(w, http.StatusBadRequest, err)

@@ -6,6 +6,7 @@ package releases
 import (
 	"errors"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/V3x0rV3x/D3X/internal/audio"
 	"github.com/V3x0rV3x/D3X/internal/maketorrent"
+	"github.com/V3x0rV3x/D3X/internal/names"
 )
 
 // FsEntry est une entrée d'un dossier.
@@ -118,7 +120,22 @@ type Entry struct {
 	Exec  bool   `json:"exec"`            // contient un exécutable : jamais publié seul
 	Flat  bool   `json:"flat"`            // dossier sans fichier à sa racine (collection, cross-seeds)
 	Error string `json:"error,omitempty"` // illisible
+	// ReleaseName : le nom sous lequel la release part quand le dossier n'a
+	// pas un nom de release, repris de sa vidéo principale (NameFromVideo) ;
+	// vide quand le nom du dossier ou du fichier sert tel quel.
+	ReleaseName string `json:"releaseName,omitempty"`
+	// BadName : une vidéo dont ni le nom ni celui de la vidéo principale ne
+	// sont des noms de release (« 21 Grams (2003) [ImdbID-tt0315733] », rangé
+	// par une médiathèque) : la raison, dite sur la ligne du lot. Le lot ne la
+	// publie jamais sous ce nom (Ekhstaz, 04/11/26).
+	BadName string `json:"badName,omitempty"`
 }
+
+// Raisons de BadName, pour un dossier et pour un fichier seul.
+const (
+	BadNameDir  = "le nom du dossier n'est pas un nom de release : renomme-le, ou publie-le avec Publier"
+	BadNameFile = "le nom du fichier n'est pas un nom de release : renomme-le, ou publie-le avec Publier"
+)
 
 // VideoExt : extensions vidéo (MediaInfo, filtre « vidéos seulement »).
 var VideoExt = map[string]bool{".mkv": true, ".mp4": true, ".avi": true, ".m2ts": true, ".ts": true, ".mov": true, ".wmv": true, ".webm": true, ".mpg": true, ".mpeg": true, ".m4v": true, ".iso": true, ".vob": true}
@@ -166,12 +183,17 @@ func entryOf(full string, exclude []string) Entry {
 	} else {
 		be.Path, be.Size, be.Files = p.Root, p.Total, len(p.Files)
 		be.Flat = !p.Single
-		var videoBytes, audioBytes int64
-		for _, f := range p.Files {
+		var videoBytes, audioBytes, bestVideo int64
+		mainVideo := -1
+		for i, f := range p.Files {
 			ext := strings.ToLower(filepath.Ext(f.Rel))
 			if VideoExt[ext] {
 				be.Video = true
 				videoBytes += f.Size
+				// La plus grosse vidéo, la première en cas d'égalité, comme Publier.
+				if mainVideo < 0 || f.Size > bestVideo {
+					bestVideo, mainVideo = f.Size, i
+				}
 			}
 			if audio.IsAudio(f.Rel) {
 				be.Audio = true
@@ -193,6 +215,22 @@ func entryOf(full string, exclude []string) Entry {
 				be.Audio = false
 			}
 		}
+		// Nom de release d'une vidéo, comme dans Publier : celui du dossier,
+		// sinon celui de sa vidéo principale ; ni l'un ni l'autre, le lot ne
+		// la prend pas. Une collection (Flat) a déjà sa propre raison.
+		if be.Video && !be.Flat {
+			be.ReleaseName = NameFromVideo(p, mainVideo)
+			own := p.Name
+			if p.Single {
+				own = strings.TrimSuffix(own, filepath.Ext(own))
+			}
+			if be.ReleaseName == "" && !names.LooksLikeRelease(own) {
+				be.BadName = BadNameDir
+				if p.Single {
+					be.BadName = BadNameFile
+				}
+			}
+		}
 	}
 	// Album en plusieurs disques (CD1, Disc 2…) : un seul album, pas une
 	// collection.
@@ -200,6 +238,30 @@ func entryOf(full string, exclude []string) Entry {
 		be.Flat = false
 	}
 	return be
+}
+
+// NameFromVideo : le nom de release d'un dossier qui n'en porte pas (Hypsis,
+// 27/10/26 : « 1917 (2019) » rangé par une médiathèque, sa vidéo
+// « 1917.2019.MULTi.1080p.BluRay.x264-GROUPE.mkv ») : celui de la vidéo
+// principale (main : son index dans p.Files), sans extension, s'il a l'air
+// d'un nom de release. Vide quand le dossier porte déjà un nom de release (le
+// cas normal), pour un fichier seul, ou quand la vidéo ne fait pas plus de la
+// moitié de la release (une saison : un épisode n'est pas son nom). Publier
+// le propose, le lot le prend (Ekhstaz, 04/11/26).
+func NameFromVideo(p *maketorrent.Plan, main int) string {
+	if p == nil || p.Single || main < 0 || main >= len(p.Files) || names.LooksLikeRelease(p.Name) {
+		return ""
+	}
+	f := p.Files[main]
+	if !VideoExt[strings.ToLower(path.Ext(f.Rel))] || f.Size*2 <= p.Total {
+		return ""
+	}
+	base := path.Base(f.Rel)
+	base = strings.TrimSpace(strings.TrimSuffix(base, path.Ext(base)))
+	if !names.LooksLikeRelease(base) {
+		return ""
+	}
+	return base
 }
 
 var discDir = regexp.MustCompile(`(?i)^(cd|dis[ck]|dvd|vinyl|face|side)[ ._-]*\d+`)

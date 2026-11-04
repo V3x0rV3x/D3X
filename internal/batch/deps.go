@@ -22,9 +22,10 @@ type Deps interface {
 	LastByPath() map[string]journal.Event
 	// Tags : les étiquettes des torrents qui couvrent chaque chemin (vu par
 	// src, qui dit le dossier parent pour deviner une correspondance de
-	// dossiers), dans tous les clients ; warn nomme un client qui n'a pas
-	// répondu (ses étiquettes manquent), vide sinon.
-	Tags(ctx context.Context, src source.Source, paths []string) (tags map[string][]string, warn string)
+	// dossiers), dans tous les clients. Erreur (le lot ne part pas) si un
+	// client réglé n'a pas pu être lu, même après une nouvelle tentative.
+	// Demandé seulement quand SkipTags n'est pas vide.
+	Tags(ctx context.Context, src source.Source, paths []string) (map[string][]string, error)
 	// SkipTags : les étiquettes à ne jamais publier, en minuscules (Réglages ▸ Ajouts).
 	SkipTags() map[string]bool
 

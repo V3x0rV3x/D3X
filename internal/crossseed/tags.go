@@ -4,6 +4,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/V3x0rV3x/D3X/internal/client"
 	"github.com/V3x0rV3x/D3X/internal/names"
 	"github.com/V3x0rV3x/D3X/internal/pathmap"
 )
@@ -38,6 +39,7 @@ func TagsOf(paths []string, lists []Listed) map[string][]string {
 	type tor struct {
 		path string
 		tags []string
+		root bool // le contenu est un dossier de release : il couvre ce qui est dedans
 	}
 	for _, l := range lists {
 		// Les chemins des torrents, normalisés une fois par client (normPath :
@@ -48,7 +50,8 @@ func TagsOf(paths []string, lists []Listed) map[string][]string {
 			if len(t.Tags) == 0 || strings.TrimSpace(t.ContentPath) == "" {
 				continue
 			}
-			tors = append(tors, tor{normPath(names.FromDisk(t.ContentPath)), t.Tags})
+			p := normPath(names.FromDisk(t.ContentPath))
+			tors = append(tors, tor{p, t.Tags, releaseRoot(p, t)})
 		}
 		if len(tors) == 0 {
 			continue
@@ -59,7 +62,7 @@ func TagsOf(paths []string, lists []Listed) map[string][]string {
 				continue // un chemin vide « contiendrait » tout
 			}
 			for _, t := range tors {
-				if underNorm(t.path, cp) || underNorm(cp, t.path) {
+				if underNorm(t.path, cp) || (t.root && underNorm(cp, t.path)) {
 					add(p, t.tags)
 				}
 			}
@@ -69,6 +72,23 @@ func TagsOf(paths []string, lists []Listed) map[string][]string {
 		sort.Slice(tags, func(i, j int) bool { return strings.ToLower(tags[i]) < strings.ToLower(tags[j]) })
 	}
 	return out
+}
+
+// releaseRoot : le contenu du torrent (p, normalisé) est sa propre racine, et
+// couvre donc ce qui est dedans (un épisode d'un pack de saison). Un torrent
+// multi-fichiers sans dossier racine de qBittorrent a pour contenu le dossier
+// d'enregistrement lui-même (« /data/torrents/tv », voire « D:\ ») : il ne
+// couvre pas tout ce dossier (revue du 04/11/26). Racine : le dernier élément
+// est le nom du torrent, ou, quand le client donne le dossier d'enregistrement,
+// le contenu n'est pas ce dossier (racine renommée dans le client).
+func releaseRoot(p string, t client.Torrent) bool {
+	if name := strings.TrimSpace(names.FromDisk(t.Name)); name != "" && strings.EqualFold(baseName(p), name) {
+		return true
+	}
+	if sp := strings.TrimSpace(t.SavePath); sp != "" {
+		return normPath(names.FromDisk(sp)) != p
+	}
+	return false
 }
 
 // underNorm : p est dir, ou dedans (à une frontière de dossier) ; les deux

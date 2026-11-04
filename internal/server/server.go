@@ -110,6 +110,12 @@ type Server struct {
 	bbCSSAt  time.Time
 
 	opener func(string) error // ouvre un lien dans le navigateur par défaut (local seulement)
+
+	// retryMu : une nouvelle tentative sur les clients à la fois (retryDown,
+	// pris avant mu, jamais pendant). connGen change à chaque nouvel état des
+	// clients : la page relit alors leurs pastilles.
+	retryMu sync.Mutex
+	connGen atomic.Int64
 }
 
 // NewToken tire un jeton de session.
@@ -144,7 +150,7 @@ func NewWith(version string, cfg *config.Config, token string, port int, opts Op
 	s.engine = crossseed.New(s.env)
 	s.engine.SetRefresh(s.retryClients)
 	s.mb = musicbrainz.New(version)
-	s.pub = publish.New(s.env, s.engine, version)
+	s.pub = publish.New(s.envRetry, s.engine, version)
 	s.miPage = mediainfo.NewPage()
 	s.mi = &mediainfo.Chooser{Exec: mediainfo.Find(), Page: s.miPage}
 	if s.mi.Exec != nil {
@@ -192,6 +198,7 @@ func NewWith(version string, cfg *config.Config, token string, port int, opts Op
 	})
 	go s.connect()
 	go s.v3xRetryLoop()
+	go s.clientRetryLoop()
 	go s.connectSSH()
 	go s.updateLoop()
 	go s.surveyLoop()
@@ -312,6 +319,7 @@ func (s *Server) connect() {
 	s.mu.Lock()
 	s.v, s.me, s.v3xErr, s.v3xRetry = v, me, v3xErr, v3xRetry
 	s.conns = conns
+	s.connGen.Add(1)
 	s.mu.Unlock()
 }
 
@@ -648,12 +656,14 @@ func (s *Server) lotSummary() *lotSummary {
 }
 
 // status : l'état de l'analyse, et celui du lot pour que la page de
-// n'importe quel onglet voie qu'une demande de MediaInfo attend.
+// n'importe quel onglet voie qu'une demande de MediaInfo attend. ClientsGen
+// change quand un client est rejoint (ou perdu) : la page relit leur état.
 func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, struct {
 		crossseed.Status
-		Lot *lotSummary `json:"lot,omitempty"`
-	}{s.engine.State(), s.lotSummary()})
+		Lot        *lotSummary `json:"lot,omitempty"`
+		ClientsGen int64       `json:"clientsGen"`
+	}{s.engine.State(), s.lotSummary(), s.connGen.Load()})
 }
 
 func (s *Server) rows(w http.ResponseWriter, r *http.Request) {

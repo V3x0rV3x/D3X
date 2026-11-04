@@ -79,3 +79,38 @@ func TestGuessRules(t *testing.T) {
 		t.Fatalf("règle inventée : %+v", l[0].Target.PathMap)
 	}
 }
+
+// Torrent multi-fichiers sans dossier racine (qBittorrent) : son contenu est
+// le dossier d'enregistrement lui-même. Il ne couvre pas tout ce dossier, ni
+// tout le disque (revue du 04/11/26) ; un vrai dossier de release (pack de
+// saison), même renommé dans le client, couvre toujours ce qui est dedans.
+func TestTagsOfSaveDir(t *testing.T) {
+	pc := Listed{Target: Target{ID: "pc"}, List: []client.Torrent{
+		{Name: "Pack.Sans.Racine", ContentPath: "/data/torrents/tv", SavePath: "/data/torrents/tv/", Tags: []string{"noHL"}},
+		{Name: "Autre.Pack", ContentPath: `D:\`, SavePath: `D:\`, Tags: []string{"disque"}},
+		{Name: "Show.S01", ContentPath: "/data/series/Show.S01", SavePath: "/data/series", Tags: []string{"pack"}},
+		{Name: "Nom.Origine", ContentPath: "/data/renomme/Nouveau.Nom", SavePath: "/data/renomme", Tags: []string{"renomme"}},
+		{Name: "Saison.S02", ContentPath: "/data/autres/Saison.S02", Tags: []string{"transmission"}}, // sans dossier d'enregistrement : le nom suffit
+		{Name: "Sans.Nom.Commun", ContentPath: "/data/inconnu", Tags: []string{"inconnu"}},           // ni nom ni dossier d'enregistrement : prudence
+	}}
+	paths := []string{
+		"/data/torrents/tv/Autre.Serie.S02",
+		"/data/torrents/tv/Film.2020",
+		"/data/torrents/tv",
+		`D:\Films\Film.2021`,
+		"/data/series/Show.S01/Show.S01E01.mkv",
+		"/data/renomme/Nouveau.Nom/E01.mkv",
+		"/data/autres/Saison.S02/E01.mkv",
+		"/data/inconnu/Film.2022",
+	}
+	got := TagsOf(paths, []Listed{pc})
+	want := map[string][]string{
+		"/data/torrents/tv":                     {"noHL"}, // la release qui est ce dossier même reste couverte
+		"/data/series/Show.S01/Show.S01E01.mkv": {"pack"},
+		"/data/renomme/Nouveau.Nom/E01.mkv":     {"renomme"},
+		"/data/autres/Saison.S02/E01.mkv":       {"transmission"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("TagsOf :\n%v\nattendu\n%v", got, want)
+	}
+}

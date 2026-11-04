@@ -73,7 +73,8 @@ function libFolderList() {
     ul.append(li);
   }
   ul.classList.toggle("hidden", folders.length === 0);
-  $("#lib-scan").disabled = folders.length === 0 || !(ui.state && ui.state.v3x.ok && clientsReady());
+  // Client en erreur : l'analyse le retente d'abord (Encrypted_Shards, 04/11/26).
+  $("#lib-scan").disabled = folders.length === 0 || !(ui.state && ui.state.v3x.ok && clientsSet());
 }
 
 // Plusieurs clients : celui qui reçoit les ajouts de la médiathèque.
@@ -273,9 +274,39 @@ function libRow(r) {
     bar.append(i);
     box.append(bar);
   }
+  // Vérification incomplète : les mêmes boutons que dans le Cross-seed, sinon
+  // la release restait bloquée, même vérifiée à 100 % ensuite dans le client
+  // (SVz, ticket n°6, 04/11/26).
+  if (r.status === "failed") {
+    const rb = el("button", "btn small", "Revérifier");
+    rb.type = "button";
+    rb.title = "Relance la vérification dans ton client : la release démarre si elle atteint 100 %.";
+    rb.addEventListener("click", () => libAction("/ui/recheck", r, rb, "Vérification relancée dans ton client."));
+    box.append(rb);
+    const b = el("button", "btn small", "Retirer du client");
+    b.type = "button";
+    b.title = "Retire ce torrent de ton client. Tes fichiers ne sont pas touchés.";
+    b.addEventListener("click", () => libAction("/ui/remove", r, b, "Retiré de ton client, fichiers intacts."));
+    box.append(b);
+  }
   tdE.append(box);
   tr.append(tdE);
   return tr;
+}
+
+// Revérifier ou retirer un ajout (mêmes routes que le Cross-seed), puis la
+// Médiathèque est relue ; libPoll remplace le suivi en cours, sans le doubler.
+async function libAction(path, r, btn, ok) {
+  btn.disabled = true;
+  try {
+    await api(path, { key: r.key });
+    toast(ok, "ok");
+    await libLoad();
+    libPoll();
+  } catch (e) {
+    btn.disabled = false;
+    if (e.message !== "session") toast(e.message, "bad");
+  }
 }
 
 function libBar() {

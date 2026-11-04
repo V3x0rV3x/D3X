@@ -75,7 +75,9 @@ func TestPolicyBrowsedLotAndPublier(t *testing.T) {
 		return p
 	}
 	mk("Le Temps D'un Week-end (1992) - 1080p FR EN x264 ac3 mHDgz.mkv")
-	detag := mk("Le Temps D'un Week-end (1992).mkv")
+	// Le detag porte un nom de release sans le tag : sous un nom de
+	// médiathèque, le lot ne le prendrait pas du tout (nom de release, 1.1.50).
+	detag := mk("Le.Temps.D.un.Weekend.1992.FRENCH.1080p.WEB.x264.mkv")
 
 	cfg := config.Defaults()
 	cfg.V3XBase, cfg.V3XKey = vs.URL, "demo"
