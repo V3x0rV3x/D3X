@@ -53,14 +53,14 @@ function lotEntries(list, hits) {
 // écarter, s'il y a un client (colonne), et un client muet.
 function lotTake(r) {
   lot.skipTags = r.skipTags || [];
-  lot.skipSet = new Set(lot.skipTags.map((t) => t.toLowerCase()));
+  lot.skipSet = new Set(lot.skipTags.map((t) => t.trim().toLowerCase()));
   lot.tagged = !!r.tagged;
   lot.tagsWarn = r.tagsWarn || "";
 }
 
 // skipDetail : la raison d'une release écartée, comme D3X l'écrit pendant un lot.
 function skipDetail(tags) {
-  const bad = (tags || []).filter((t) => lot.skipSet.has(t.toLowerCase()));
+  const bad = (tags || []).filter((t) => lot.skipSet.has(t.trim().toLowerCase()));
   return (bad.length > 1 ? "étiquettes " : "étiquette ") + bad.join(", ") + " dans ton client : jamais publiée par un lot";
 }
 
@@ -70,8 +70,10 @@ function showSkipped() {
   try { return localStorage.getItem("d3x-lot-showskip") !== "0"; } catch (err) { return true; }
 }
 
-function lotVisible(e) {
-  return !e.skipped || showSkipped();
+// lotVisible : la ligne s'affiche-t-elle, l'option « Afficher… » valant show
+// (lue une fois par rendu, pas une fois par ligne).
+function lotVisible(e, show) {
+  return !e.skipped || show;
 }
 
 async function lotList() {
@@ -195,8 +197,9 @@ function lotRender() {
   const has = lot.entries.length > 0;
   $("#b-tabs").classList.toggle("hidden", !has);
   $("#b-wrap").classList.toggle("hidden", !has);
+  const show = showSkipped();
   const counts = {};
-  for (const e of lot.entries) if (lotVisible(e)) counts[e.state] = (counts[e.state] || 0) + 1;
+  for (const e of lot.entries) if (lotVisible(e, show)) counts[e.state] = (counts[e.state] || 0) + 1;
   const nSkip = lot.entries.filter((e) => e.skipped).length;
   $("#b-showskip-row").classList.toggle("hidden", nSkip === 0);
   $("#b-showskip-n").textContent = "(" + nSkip + ")";
@@ -215,7 +218,7 @@ function lotRender() {
     b.addEventListener("click", () => { lot.tab = id; lotRender(); });
     tabs.append(b);
   }
-  const list = lot.entries.filter((e) => e.state === lot.tab && lotVisible(e));
+  const list = lot.entries.filter((e) => e.state === lot.tab && lotVisible(e, show));
   const tb = $("#b-tbody");
   tb.replaceChildren();
   for (const e of list) tb.append(lotRow(e));
@@ -245,7 +248,8 @@ function lotRender() {
 // par erreur, sans moyen de les relancer).
 function lotResettable() {
   if (!["ready", "review", "simulated", "ignored", "error", "duplicate"].includes(lot.tab)) return [];
-  return lot.entries.filter((e) => e.state === lot.tab && !e.error);
+  const show = showSkipped();
+  return lot.entries.filter((e) => e.state === lot.tab && !e.error && lotVisible(e, show));
 }
 
 async function lotReset() {
@@ -301,7 +305,7 @@ function lotRow(e) {
   if (lot.tagged) {
     const tc = el("td");
     const wrap = el("div", "lot-tags");
-    for (const tg of e.tags || []) wrap.append(el("span", "pill" + (lot.skipSet.has(tg.toLowerCase()) ? " bad" : ""), tg));
+    for (const tg of e.tags || []) wrap.append(el("span", "pill" + (lot.skipSet.has(tg.trim().toLowerCase()) ? " bad" : ""), tg));
     tc.append(wrap);
     tr.append(tc);
   }
@@ -498,7 +502,6 @@ function applyRun(run) {
     if (run.dir) lotAdoptFolder(run.dir, run.source);
   }
   lot.lastRun = run;
-  if (run.tagsWarn) lot.tagsWarn = run.tagsWarn;
   // Les états du lot ne s'appliquent que pendant qu'il tourne, et une fois à
   // sa fin : ensuite la liste est à l'utilisateur (cases décochées, Ignorer,
   // remise en attente, autre dossier listé), le suivi ne la réécrit plus.
@@ -507,6 +510,9 @@ function applyRun(run) {
     // est celle du lot ; une liste choisie dans Cross-seed ou un autre
     // dossier ne reçoit rien d'étranger.
     const ours = adopted || (run.dir === lot.dir && !lot.picked);
+    // Seulement pendant le lot, et pour sa liste : un lot fini ne ramène pas
+    // son avertissement sur une autre liste.
+    if (ours && run.tagsWarn) lot.tagsWarn = run.tagsWarn;
     const byPath = new Map(lot.entries.map((e) => [e.path, e]));
     for (const re of run.entries) {
       let e = byPath.get(re.path);
