@@ -94,6 +94,7 @@ func TestTransmission(t *testing.T) {
 	if len(tor.Tags) != 2 || tor.Tags[0] != "noHL" || tor.Tags[1] != "V3X" {
 		t.Fatalf("étiquettes : %q", tor.Tags)
 	}
+	// Vérifié tout de suite : Files refait un torrent-get avec d'autres champs.
 	asked := false
 	for _, f := range getFields {
 		asked = asked || f == "labels"
@@ -183,7 +184,10 @@ func TestDeluge(t *testing.T) {
 		case "core.get_torrents_status":
 			reply(map[string]interface{}{hash: map[string]interface{}{"name": "Release.Test", "save_path": "/dl", "total_size": 1000, "total_wanted": 1000,
 				"progress": 100.0, "state": "Paused", "label": "nohl", "trackers": []map[string]string{{"url": "https://autre.invalid/a"}},
-				"files": []map[string]interface{}{{"path": "Release.Test/a.mkv", "size": 1000}}}}, "")
+				"files": []map[string]interface{}{{"path": "Release.Test/a.mkv", "size": 1000}}},
+				// Sans le plugin Label : pas de clé « label ».
+				"e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2": map[string]interface{}{"name": "Sans.Label", "save_path": "/dl", "total_size": 10, "total_wanted": 10,
+					"progress": 100.0, "state": "Paused"}}, "")
 		case "core.add_torrent_file":
 			addOpts = req.Params[2].(map[string]interface{})
 			reply(hash, "")
@@ -210,14 +214,26 @@ func TestDeluge(t *testing.T) {
 	if v, err := c.Version(ctx); err != nil || v != "2.1.1" || !connected {
 		t.Fatalf("version : %q %v (démon relié : %v)", v, err, connected)
 	}
-	list, err := c.List(ctx, []string{hash})
-	if err != nil || len(list) != 1 || list[0].ContentPath != "/dl/Release.Test" || list[0].Progress != 1 || list[0].Checking {
-		t.Fatalf("liste : %+v %v", list, err)
+	all, err := c.List(ctx, nil)
+	if err != nil || len(all) != 2 {
+		t.Fatalf("liste : %+v %v", all, err)
+	}
+	// List parcourt une map : on retrouve chaque torrent par son hash.
+	byHash := map[string]Torrent{}
+	for _, x := range all {
+		byHash[x.Hash] = x
+	}
+	first := byHash[hash]
+	if first.ContentPath != "/dl/Release.Test" || first.Progress != 1 || first.Checking {
+		t.Fatalf("liste : %+v", all)
 	}
 	// Plugin Label : une seule étiquette par torrent ; sans le plugin, la clé
 	// manque et le torrent n'en a aucune.
-	if len(list[0].Tags) != 1 || list[0].Tags[0] != "nohl" {
-		t.Fatalf("étiquette : %q", list[0].Tags)
+	if len(first.Tags) != 1 || first.Tags[0] != "nohl" {
+		t.Fatalf("étiquette : %q", first.Tags)
+	}
+	if sans, ok := byHash["e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2"]; !ok || sans.Tags != nil {
+		t.Fatalf("sans label : %+v", sans)
 	}
 	files, total, err := c.Files(ctx, hash)
 	if err != nil || total != 1000 || files[0].Path != "Release.Test/a.mkv" {
@@ -287,8 +303,9 @@ func TestRTorrent(t *testing.T) {
 		case "system.client_version":
 			io.WriteString(w, xmlResp("0.9.8"))
 		case "d.multicall2":
-			row := []interface{}{strings.ToUpper(hash), "Release.Test", "/home/box/dl/Release.Test", 1000, 1000, 0, 1, 1, 1, " noHL "}
-			io.WriteString(w, xmlResp([]interface{}{row}))
+			row := []interface{}{strings.ToUpper(hash), "Release.Test", "/home/box/dl/Release.Test", 1000, 1000, 0, 1, 1, 1, " no%20HL "}
+			sans := []interface{}{strings.ToUpper("e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2"), "Sans.Etiquette", "/home/box/dl/Sans.Etiquette", 10, 10, 0, 0, 1, 1, ""}
+			io.WriteString(w, xmlResp([]interface{}{row, sans}))
 		case "system.multicall":
 			io.WriteString(w, xmlResp([]interface{}{[]interface{}{[]interface{}{[]interface{}{"https://announce.v3x.club/pk/announce"}}}}))
 		case "f.multicall":
@@ -313,7 +330,7 @@ func TestRTorrent(t *testing.T) {
 		t.Fatalf("version : %q %v", v, err)
 	}
 	list, err := c.List(ctx, nil)
-	if err != nil || len(list) != 1 {
+	if err != nil || len(list) != 2 {
 		t.Fatalf("liste : %v %v", list, err)
 	}
 	tor := list[0]
@@ -321,8 +338,15 @@ func TestRTorrent(t *testing.T) {
 		t.Fatalf("torrent : %+v", tor)
 	}
 	// L'étiquette de ruTorrent (d.custom1), celle que D3X écrit à l'ajout.
-	if len(tor.Tags) != 1 || tor.Tags[0] != "noHL" {
+	// ruTorrent l'encode en pourcent (« no%20HL »).
+	if len(tor.Tags) != 1 || tor.Tags[0] != "no HL" {
 		t.Fatalf("étiquette : %q", tor.Tags)
+	}
+	if list[1].Hash != "e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2" || list[1].Tags != nil {
+		t.Fatalf("sans étiquette : %+v", list[1])
+	}
+	if rtLabel("100%") != "100%" {
+		t.Fatal("rtLabel : une étiquette qui ne se décode pas doit rester telle quelle")
 	}
 	files, total, err := c.Files(ctx, hash)
 	if err != nil || total != 1000 || len(files) != 1 || files[0].Path != "Release.Test/a.mkv" {
