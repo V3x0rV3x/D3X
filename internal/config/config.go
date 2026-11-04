@@ -44,6 +44,11 @@ type Config struct {
 	PubCategory string `json:"pubCategory,omitempty"`
 	// Étiquette des publications, de même (Encrypted_Shards). Vide = Tag.
 	PubTag string `json:"pubTag,omitempty"`
+	// SkipTags : étiquettes de torrents (noHL…) dont les releases ne sont
+	// jamais publiées par le Lot : une release couverte par un torrent qui
+	// porte l'une d'elles, dans n'importe quel client, est écartée, même si
+	// d'autres torrents sans étiquette seedent les mêmes fichiers (foux, 04/11/26).
+	SkipTags []string `json:"skipTags,omitempty"`
 	// DiscogsToken : jeton personnel Discogs (facultatif), pour chercher une
 	// pochette quand MusicBrainz n'en a pas. Jamais renvoyé à la page.
 	DiscogsToken string `json:"discogsToken,omitempty"`
@@ -222,6 +227,30 @@ func (c *Config) ExcludeList() []string {
 		return DefaultExclude
 	}
 	return c.Exclude
+}
+
+// SkipTagSet : les étiquettes à ne jamais publier, en minuscules, sans les
+// blancs ni les vides. Vide : rien d'écarté.
+func (c *Config) SkipTagSet() map[string]bool {
+	out := map[string]bool{}
+	for _, t := range c.SkipTags {
+		if t = strings.ToLower(strings.TrimSpace(t)); t != "" {
+			out[t] = true
+		}
+	}
+	return out
+}
+
+// ParseSkipTags lit la saisie des réglages (« noHL, LastSeed ») : sans les
+// blancs ni les vides, la casse gardée pour l'affichage ; nil si rien.
+func ParseSkipTags(s string) []string {
+	var out []string
+	for _, t := range strings.Split(s, ",") {
+		if t = strings.TrimSpace(t); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // DefaultExclude : ce que les médiathèques déposent à côté d'un film et qui

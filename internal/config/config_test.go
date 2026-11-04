@@ -189,3 +189,24 @@ func TestLinksPublish(t *testing.T) {
 		t.Fatalf("lu : %+v %v", l, err)
 	}
 }
+
+// Étiquettes à ne jamais publier (Réglages ▸ Ajouts) : saisies « a, b », gardées
+// telles quelles pour l'affichage, comparées en minuscules.
+func TestSkipTags(t *testing.T) {
+	c := Defaults()
+	c.SkipTags = ParseSkipTags(" noHL, ,LastSeed ")
+	if len(c.SkipTags) != 2 || c.SkipTags[0] != "noHL" || c.SkipTags[1] != "LastSeed" {
+		t.Fatalf("saisie : %q", c.SkipTags)
+	}
+	set := c.SkipTagSet()
+	if len(set) != 2 || !set["nohl"] || !set["lastseed"] || set["noHL"] {
+		t.Fatalf("ensemble : %v", set)
+	}
+	if len(Defaults().SkipTagSet()) != 0 || ParseSkipTags(" , ") != nil {
+		t.Fatal("vide : rien d'écarté")
+	}
+	b, _ := json.Marshal(Defaults())
+	if strings.Contains(string(b), "skipTags") {
+		t.Fatalf("vide, le réglage ne s'écrit pas : %s", b)
+	}
+}
