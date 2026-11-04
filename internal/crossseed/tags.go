@@ -76,3 +76,44 @@ func TagsOf(paths []string, lists []Listed) map[string][]string {
 func underNorm(p, dir string) bool {
 	return p == dir || (len(p) > len(dir) && p[len(dir)] == '/' && p[:len(dir)] == dir)
 }
+
+// GuessRules : les listes des clients, chacune avec sa correspondance de
+// dossiers complétée, pour les dossiers des chemins qu'aucune règle ne couvre,
+// de la règle devinée d'après ses torrents déjà rangés dans ce dossier (comme
+// Publier : pathmap.SuggestNames). dirOf : le dossier parent d'un chemin, vu
+// par D3X. Les listes données ne sont pas modifiées.
+func GuessRules(lists []Listed, paths []string, dirOf func(string) string) []Listed {
+	byDir := map[string][]string{} // dossier → noms des chemins qu'il contient
+	var dirs []string
+	for _, p := range paths {
+		d := dirOf(p)
+		if d == "" || d == p {
+			continue
+		}
+		if _, ok := byDir[d]; !ok {
+			dirs = append(dirs, d)
+		}
+		byDir[d] = append(byDir[d], baseName(p))
+	}
+	out := make([]Listed, len(lists))
+	for i, l := range lists {
+		out[i] = l
+		var clientPaths []string
+		for _, d := range dirs {
+			if pathmap.Covers(d, l.Target.PathMap) {
+				continue
+			}
+			if clientPaths == nil {
+				for _, t := range l.List {
+					if t.ContentPath != "" {
+						clientPaths = append(clientPaths, t.ContentPath)
+					}
+				}
+			}
+			if rule, n := pathmap.SuggestNames(d, byDir[d], clientPaths); n > 0 && rule.To != "" {
+				out[i].Target.PathMap = append(append([]pathmap.Rule(nil), out[i].Target.PathMap...), rule)
+			}
+		}
+	}
+	return out
+}

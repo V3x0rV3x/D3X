@@ -46,3 +46,36 @@ func TestTagsOf(t *testing.T) {
 		t.Fatalf("sans client : %v", got)
 	}
 }
+
+// Seedbox sans correspondance de dossiers réglée : la règle est devinée
+// d'après ses torrents déjà rangés dans le dossier, comme dans Publier, et
+// TagsOf retrouve alors ses étiquettes. Un client dont une règle couvre déjà
+// le dossier ne change pas.
+func TestGuessRules(t *testing.T) {
+	box := Listed{Target: Target{ID: "box"}, List: []client.Torrent{
+		{ContentPath: "/home/box/dl/Film.A", Tags: []string{"noHL"}},
+		{ContentPath: "/home/box/dl/Film.B", Tags: []string{"V3X"}},
+		{ContentPath: "/home/box/other/Film.C"},
+	}}
+	pc := Listed{Target: Target{ID: "pc", PathMap: []pathmap.Rule{{From: `Z:\T`, To: "/data"}}}, List: []client.Torrent{
+		{ContentPath: "/data/Film.A", Tags: []string{"pc"}},
+	}}
+	paths := []string{`Z:\T\Film.A`, `Z:\T\Film.B`, `Z:\T\Film.D`}
+	dirOf := func(string) string { return `Z:\T` }
+	lists := GuessRules([]Listed{box, pc}, paths, dirOf)
+	if len(lists) != 2 || len(lists[0].Target.PathMap) != 1 || lists[0].Target.PathMap[0] != (pathmap.Rule{From: `Z:\T`, To: "/home/box/dl"}) {
+		t.Fatalf("règle devinée : %+v", lists[0].Target.PathMap)
+	}
+	if len(lists[1].Target.PathMap) != 1 || len(box.Target.PathMap) != 0 {
+		t.Fatalf("le client réglé change, ou l'entrée est modifiée : %+v %+v", lists[1].Target.PathMap, box.Target.PathMap)
+	}
+	got := TagsOf(paths, lists)
+	want := map[string][]string{`Z:\T\Film.A`: {"noHL", "pc"}, `Z:\T\Film.B`: {"V3X"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("TagsOf avec la règle devinée :\n%v\nattendu\n%v", got, want)
+	}
+	// Rien à deviner : aucun nom commun.
+	if l := GuessRules([]Listed{box}, []string{`Z:\T\Autre`}, dirOf); len(l[0].Target.PathMap) != 0 {
+		t.Fatalf("règle inventée : %+v", l[0].Target.PathMap)
+	}
+}
