@@ -362,3 +362,19 @@ func TestRTorrentAddAndFault(t *testing.T) {
 		t.Fatalf("erreur XML-RPC : %v", err)
 	}
 }
+
+// tagList : les étiquettes telles que les clients les donnent (chaîne « a, b »
+// de qBittorrent coupée sur la virgule, labels de Transmission, label de
+// Deluge, custom1 de rTorrent), sans les blancs ni les vides.
+func TestTagList(t *testing.T) {
+	got := tagList(strings.Split("noHL, V3X,, cross-seed ", ","))
+	if len(got) != 3 || got[0] != "noHL" || got[1] != "V3X" || got[2] != "cross-seed" {
+		t.Fatalf("qBittorrent : %q", got)
+	}
+	if got := tagList([]string{" ", ""}); got != nil {
+		t.Fatalf("rien : %q, attendu nil", got)
+	}
+	if got := tagList(nil); got != nil {
+		t.Fatalf("nil : %q", got)
+	}
+}

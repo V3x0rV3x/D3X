@@ -33,6 +33,11 @@ type Torrent struct {
 	// Category : la catégorie du torrent dans le client (qBittorrent ; vide
 	// ailleurs). Sert au modèle {cat} de la catégorie des cross-seeds.
 	Category string
+	// Tags : les étiquettes du torrent dans le client (tags de qBittorrent,
+	// labels de Transmission, label de Deluge, custom1 de rTorrent), telles
+	// qu'écrites ; vide si le client n'en met pas. Le Lot écarte les releases
+	// d'un torrent qui porte une étiquette à ne jamais publier (noHL).
+	Tags []string
 }
 
 // AddOptions règle un ajout (toujours à l'arrêt).
@@ -154,4 +159,16 @@ func joinPath(dir, name string) string {
 		sep = `\`
 	}
 	return strings.TrimRight(dir, `/\`) + sep + name
+}
+
+// tagList nettoie des étiquettes : sans les blancs, sans les vides ; nil s'il
+// n'en reste aucune.
+func tagList(parts []string) []string {
+	var out []string
+	for _, t := range parts {
+		if t = strings.TrimSpace(t); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }
