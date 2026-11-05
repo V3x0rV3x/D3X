@@ -600,3 +600,5 @@ dialog .confirm dd { margin: 0; word-break: break-word; }
 .rows tr.noname td:not(:last-child) { opacity: .55; }
 /* Cross-seed ▸ Autres : ligne masquée réaffichée (Encrypted_Shards, 04/11/26). */
 .rows tr.masked td:not(:last-child) { opacity: .55; }
+/* Médiathèque : release ignorée réaffichée (PierrePJ8, 05/11/26). */
+.rows tr.ignored td:not(:last-child) { opacity: .55; }

@@ -97,6 +97,8 @@ Une release dont il manque un fichier (souvent un petit .nfo) est signalée « i
 
 Un ajout resté en **Vérification incomplète** (ton client n'a pas lancé la vérification, ou elle s'est arrêtée sous 100 %) a, comme dans le cross-seed, **Revérifier** (la release démarre si elle atteint 100 %) et **Retirer du client** (tes fichiers ne sont pas touchés).
 
+Une release que tu ne veux pas voir revenir (par exemple un fichier que tu as modifié, que ton client refusera toujours à la vérification) : **Ignorer** la retire de son onglet et de « Tout cocher », et elle ne revient plus à chaque analyse. Ça marche dans « À ajouter », « Incomplètes » et « Autres » ; « Les réafficher » la retrouve, grisée, avec **Ne plus ignorer**. La liste des releases ignorées reste sur l'appareil.
+
 ![La médiathèque : deux films renommés retrouvés sur V3X, vérifiés morceau par morceau sur le disque, prêts à être ajoutés](docs/images/mediatheque.png)
 
 ## Les liens

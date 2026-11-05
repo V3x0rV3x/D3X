@@ -4,7 +4,7 @@
 // (renommés, sans leur .torrent) retrouvés sur V3X, vérifiés sur ton disque,
 // puis ajoutés à ton client. Utilise les outils de app.js.
 
-const libView = { data: null, tab: "add", selected: new Set(), source: "local", shown: false, timer: null, version: -1 };
+const libView = { data: null, tab: "add", selected: new Set(), source: "local", shown: false, timer: null, version: -1, showIgnored: false };
 
 const LIB_TABS = [
   { id: "add", label: "À ajouter", statuses: ["add", "queued", "checking", "failed"], empty: "Rien à ajouter pour l'instant : lance une analyse." },
@@ -29,6 +29,50 @@ const LIB_STATUS = {
 
 function libTabOf(status) {
   return LIB_TABS.find((t) => t.statuses.includes(status)) || LIB_TABS[LIB_TABS.length - 1];
+}
+
+// Releases écartées par le membre (PierrePJ8, 05/11/26) : des fichiers qu'il a
+// modifiés lui-même (piste audio retirée) revenaient dans « À ajouter » à
+// chaque analyse, et son client les refusait à chaque vérification ; de même
+// pour des lignes de « Incomplètes » et « Autres ». « Ignorer » les cache de
+// leur onglet et de ses compteurs, « Tout cocher » et « Ajouter » ne les
+// prennent jamais. Pas pendant « En file » ni « Vérification… ». Gardé sur
+// l'appareil, à part des releases ignorées du Cross-seed (« d3x-ignored »).
+//
+// Clé gardée : r.key, « lib: » suivi de l'identifiant de la fiche V3X. Le Go
+// (crossseed/library.go) ne fait qu'une ligne par fiche et lui redonne la même
+// clé à chaque analyse, quel que soit l'état de la ligne (À ajouter, Retiré du
+// client, Incomplète…). Le dossier local n'y entre pas : il est vide quand
+// l'analyse s'arrête avant d'avoir retrouvé les fichiers (release incomplète,
+// .torrent que V3X n'a pas renvoyé ce jour-là), et la même release serait
+// revenue sous une autre clé à l'analyse suivante.
+const LIB_IGNORABLE = ["add", "failed", "completable", "partial", "different", "error", "removed"];
+let libIgnCache = null;
+function libIgnoredSet() {
+  if (!libIgnCache) {
+    try {
+      const v = JSON.parse(localStorage.getItem("d3x-lib-ignored") || "[]");
+      libIgnCache = new Set(Array.isArray(v) ? v.filter((k) => typeof k === "string") : []);
+    } catch (e) {
+      libIgnCache = new Set();
+    }
+  }
+  return libIgnCache;
+}
+
+function libIgnored(r) {
+  return LIB_IGNORABLE.includes(r.status) && libIgnoredSet().has(r.key);
+}
+
+function libToggleIgnored(r) {
+  const s = libIgnoredSet();
+  if (s.has(r.key)) s.delete(r.key);
+  else {
+    s.add(r.key);
+    libView.selected.delete(r.key);
+  }
+  try { localStorage.setItem("d3x-lib-ignored", JSON.stringify([...s])); } catch (e) { /* rien */ }
+  libRender();
 }
 
 async function libLoad() {
@@ -192,16 +236,27 @@ function libRender() {
 
   const rows = d.rows || [];
   // Les releases « À compléter » se cochent aussi : sans elles ici, chaque
-  // rafraîchissement les décochait (MiTor, 23/10/26).
-  const keys = new Set(rows.filter((r) => r.status === "add" || r.status === "completable").map((r) => r.key));
+  // rafraîchissement les décochait (MiTor, 23/10/26). Une release ignorée ne
+  // reste jamais cochée.
+  const keys = new Set(rows.filter((r) => (r.status === "add" || r.status === "completable") && !libIgnored(r)).map((r) => r.key));
   for (const k of libView.selected) if (!keys.has(k)) libView.selected.delete(k);
   const counts = {};
-  for (const r of rows) counts[libTabOf(r.status).id] = (counts[libTabOf(r.status).id] || 0) + 1;
+  const nIgnoredIn = {}; // par onglet
+  for (const r of rows) {
+    const t = libTabOf(r.status).id;
+    if (libIgnored(r)) {
+      nIgnoredIn[t] = (nIgnoredIn[t] || 0) + 1;
+      if (!libView.showIgnored) continue;
+    }
+    counts[t] = (counts[t] || 0) + 1;
+  }
   const tabs = $("#lib-tabs");
   tabs.replaceChildren();
   tabs.classList.toggle("hidden", rows.length === 0);
   for (const t of LIB_TABS) {
-    if (t.id !== "add" && !counts[t.id]) continue;
+    // Un onglet aux seules releases ignorées reste là, sinon « Les
+    // réafficher » devenait introuvable (comme dans le Cross-seed).
+    if (t.id !== "add" && !counts[t.id] && !nIgnoredIn[t.id]) continue;
     const b = el("button", "tab");
     b.setAttribute("role", "tab");
     b.setAttribute("aria-selected", String(t.id === libView.tab));
@@ -210,14 +265,25 @@ function libRender() {
     tabs.append(b);
   }
   const tab = LIB_TABS.find((t) => t.id === libView.tab) || LIB_TABS[0];
-  const list = rows.filter((r) => libTabOf(r.status).id === tab.id);
+  const list = rows.filter((r) => libTabOf(r.status).id === tab.id && (libView.showIgnored || !libIgnored(r)));
   const tbody = $("#lib-tbody");
   tbody.replaceChildren(...list.map(libRow));
   $("#lib-wrap").classList.toggle("hidden", rows.length === 0);
+  const ignLine = $("#lib-ign-line");
+  const nIgnored = nIgnoredIn[tab.id] || 0;
+  ignLine.classList.toggle("hidden", !nIgnored);
+  if (nIgnored) {
+    $("#lib-ign-text").textContent = nIgnored + " " + plural(nIgnored, "release ignorée", "releases ignorées") + (libView.showIgnored ? ", affichée" + (nIgnored > 1 ? "s" : "") + " avec les autres." : ".");
+    $("#lib-ign-toggle").textContent = libView.showIgnored ? "Les masquer" : "Les réafficher";
+  }
   const empty = $("#lib-empty");
-  empty.textContent = list.length ? tab.note || "" : p === "done" && tab.id === "add" ? "Aucune release de V3X trouvée dans ces dossiers (hors celles que ton client seede déjà)." : tab.empty;
+  empty.textContent = list.length
+    ? tab.note || ""
+    : nIgnored
+      ? "Toutes les releases de cet onglet sont ignorées."
+      : p === "done" && tab.id === "add" ? "Aucune release de V3X trouvée dans ces dossiers (hors celles que ton client seede déjà)." : tab.empty;
   empty.classList.toggle("hidden", !empty.textContent);
-  const addable = list.filter((r) => r.status === "add" || r.status === "completable");
+  const addable = list.filter((r) => (r.status === "add" || r.status === "completable") && !libIgnored(r));
   const all = $("#lib-all");
   all.disabled = addable.length === 0;
   all.checked = addable.length > 0 && addable.every((r) => libView.selected.has(r.key));
@@ -226,8 +292,11 @@ function libRender() {
 
 function libRow(r) {
   const tr = el("tr");
+  // Ignorée et réaffichée : grisée, et sans case à cocher.
+  const ignored = libIgnored(r);
+  if (ignored) tr.classList.add("ignored");
   const td = el("td", "c-check");
-  if (r.status === "add" || r.status === "completable") {
+  if ((r.status === "add" || r.status === "completable") && !ignored) {
     const cb = el("input");
     cb.type = "checkbox";
     cb.checked = libView.selected.has(r.key);
@@ -289,6 +358,16 @@ function libRow(r) {
     b.addEventListener("click", () => libAction("/ui/remove", r, b, "Retiré de ton client, fichiers intacts."));
     box.append(b);
   }
+  if (LIB_IGNORABLE.includes(r.status)) {
+    const b = el("button", "btn small", ignored ? "Ne plus ignorer" : "Ignorer");
+    b.type = "button";
+    b.title = ignored
+      ? "La release revient dans la liste à chaque analyse."
+      : "Écarte cette release de la Médiathèque (par exemple un fichier que tu as modifié, que ton client refusera toujours) : elle ne revient plus à chaque analyse, et « Tout cocher » la laisse de côté. Gardé sur cet appareil." +
+        (r.status === "failed" ? " Le torrent reste dans ton client : « Retirer du client » l'en enlève." : "");
+    b.addEventListener("click", () => libToggleIgnored(r));
+    box.append(b);
+  }
   tdE.append(box);
   tr.append(tdE);
   return tr;
@@ -317,7 +396,7 @@ function libBar() {
 }
 
 async function libApply() {
-  const keys = [...libView.selected];
+  const keys = [...libView.selected].filter((k) => !libIgnoredSet().has(k));
   if (!keys.length) return;
   $("#lib-apply").disabled = true;
   try {
@@ -370,10 +449,14 @@ function bindLibrary() {
   });
   $("#lib-all").addEventListener("change", (ev) => {
     for (const r of (libView.data && libView.data.rows) || []) {
-      if ((r.status !== "add" && r.status !== "completable") || libTabOf(r.status).id !== libView.tab) continue;
+      if ((r.status !== "add" && r.status !== "completable") || libTabOf(r.status).id !== libView.tab || libIgnored(r)) continue;
       if (ev.target.checked) libView.selected.add(r.key);
       else libView.selected.delete(r.key);
     }
+    libRender();
+  });
+  $("#lib-ign-toggle").addEventListener("click", () => {
+    libView.showIgnored = !libView.showIgnored;
     libRender();
   });
 }
