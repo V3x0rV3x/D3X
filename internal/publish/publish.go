@@ -76,6 +76,10 @@ type Job struct {
 	InfoHash  string     `json:"infoHash,omitempty"`
 	Error     string     `json:"error,omitempty"`
 	ErrorBody string     `json:"errorBody,omitempty"`
+	// DupError : la recherche de doublon sur V3X n'a pas répondu (la raison) ;
+	// Duplicate et Gone ne disent alors rien. Publier passe outre (le site
+	// refuse un doublon à l'envoi) ; le Lot ne range pas la release sans savoir.
+	DupError string `json:"-"`
 	// Le client torrent qui seedera la release (identifiant et nom), et où
 	// il voit le dossier qui la contient.
 	Client     string                `json:"client"`
@@ -205,6 +209,13 @@ func newID() string {
 
 // Start liste la release, cherche un doublon sur V3X et lance le hachage.
 func (m *Manager) Start(src source.Source, where string) (*Job, error) {
+	return m.StartCtx(context.Background(), src, where)
+}
+
+// StartCtx : Start avec le contexte de l'appelant. Le Lot y met son Retry
+// (v3x.WithRetry) : la recherche de doublon attend alors la pause demandée par
+// le site au lieu d'échouer. Le hachage, lui, ne dépend jamais de parent.
+func (m *Manager) StartCtx(parent context.Context, src source.Source, where string) (*Job, error) {
 	if err := private(src, where); err != nil {
 		return nil, err
 	}
@@ -213,7 +224,7 @@ func (m *Manager) Start(src source.Source, where string) (*Job, error) {
 		return nil, err
 	}
 	v, cfg := env.V3X, env.Cfg
-	ctx0, cancel0 := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx0, cancel0 := context.WithTimeout(parent, 2*time.Minute)
 	defer cancel0()
 	exclude := cfg.ExcludeList()
 	plan, err := src.Scan(ctx0, where, exclude)
@@ -239,19 +250,22 @@ func (m *Manager) Start(src source.Source, where string) (*Job, error) {
 		j.NameFromVideo = releases.NameFromVideo(plan, j.MainFile)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
 	// Doublon : mêmes fichiers (ou mêmes tailles au-delà de 100 Mio) déjà sur V3X.
-	if res, err := v.MatchBatch(ctx, nil, []v3x.MatchItem{{Key: "0", ContentHash: plan.ContentHash, SizeHash: plan.SizeHash, Total: plan.Total}}); err == nil {
+	dctx, dcancel := context.WithTimeout(parent, v3x.Timeout(parent, 20*time.Second))
+	res, err := v.MatchBatch(dctx, nil, []v3x.MatchItem{{Key: "0", ContentHash: plan.ContentHash, SizeHash: plan.SizeHash, Total: plan.Total}})
+	dcancel()
+	if err != nil {
+		j.DupError = err.Error()
+	} else if d := res["0"]; d != nil && d.Kind == "gone" {
 		// Fiche retirée : pas un doublon (le site accepte de republier ce
 		// contenu), mais la page le signale et le lot ne la publie pas seul.
-		if d := res["0"]; d != nil && d.Kind == "gone" {
-			j.Gone = d.Gone
-		} else {
-			j.Duplicate = d
-		}
+		j.Gone = d.Gone
+	} else {
+		j.Duplicate = d
 	}
 
+	ctx, cancel := context.WithTimeout(parent, 20*time.Second)
+	defer cancel()
 	// Le client qui seedera, et où il voit le dossier parent.
 	j.setPlace(pick(ctx, env, src, src.Dir(plan.Root)), cfg)
 
@@ -586,6 +600,13 @@ func onMachine(src source.Source, host string) bool {
 // Publish envoie la release au site puis la met en seed. fields : les champs
 // de la fiche (mêmes noms que la page d'upload du site).
 func (m *Manager) Publish(id string, fields map[string]string) error {
+	return m.PublishCtx(context.Background(), id, fields)
+}
+
+// PublishCtx : Publish, avec les valeurs de parent (le Retry du Lot,
+// v3x.WithRetry : un 429 à l'envoi attend la pause demandée puis renvoie).
+// L'envoi continue après le retour : l'annulation de parent ne l'arrête pas.
+func (m *Manager) PublishCtx(parent context.Context, id string, fields map[string]string) error {
 	m.mu.Lock()
 	j := m.jobs[id]
 	if j == nil {
@@ -606,7 +627,7 @@ func (m *Manager) Publish(id string, fields map[string]string) error {
 
 	go func() {
 		env, err := m.clients()
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), v3x.Timeout(parent, 5*time.Minute))
 		defer cancel()
 		var up *v3x.Uploaded
 		if err == nil {

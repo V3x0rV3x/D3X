@@ -490,3 +490,68 @@ func TestSetMusic(t *testing.T) {
 		t.Fatal("une release sans piste audio ne passe pas en album")
 	}
 }
+
+// La recherche de doublon et l'envoi faits pour le Lot (contexte avec son
+// Retry) attendent la pause demandée par un 429 puis réessaient ; pour
+// Publier, rien ne change : la recherche ratée est notée (DupError) et
+// Publier passe outre (Encrypted_Shards, 05/11/26).
+func TestStartPublishRetryFromContext(t *testing.T) {
+	parent, dir := release(t)
+	fc := newFakeClient(t)
+	site := newFakeSite(t)
+	var matches, uploads atomic.Int32
+	limited := func(w http.ResponseWriter) {
+		w.Header().Set("Retry-After", "0")
+		w.WriteHeader(http.StatusTooManyRequests)
+		io.WriteString(w, `{"error":"rate_limited"}`)
+	}
+	wrap := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/d3x/match" && matches.Add(1)%2 == 1:
+			limited(w)
+		case r.URL.Path == "/api/torrents" && uploads.Add(1) == 1:
+			limited(w)
+		default:
+			site.srv.Config.Handler.ServeHTTP(w, r)
+		}
+	}))
+	t.Cleanup(wrap.Close)
+	q, _ := client.New(client.Options{URL: fc.srv.URL})
+	clients := envOf(&fakeSite{srv: wrap}, crossseed.Target{ID: "c1", Name: "qBittorrent", Client: q})
+	m := New(clients, crossseed.New(clients), "test")
+
+	// Publier : un 429 n'est pas attendu, la recherche ratée est notée.
+	j, err := m.Start(source.Local{}, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j.DupError == "" || j.Duplicate != nil || matches.Load() != 1 {
+		t.Fatalf("Publier : DupError %q, doublon %v, %d recherches", j.DupError, j.Duplicate, matches.Load())
+	}
+	m.Cancel(j.ID)
+
+	// Lot : la recherche attend la pause puis répond.
+	var waited atomic.Bool
+	ctx := v3x.WithRetry(context.Background(), &v3x.Retry{OnWait: func(d time.Duration) {
+		if d > 0 {
+			waited.Store(true)
+		}
+	}})
+	matches.Store(0)
+	j, err = m.StartCtx(ctx, source.Local{}, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j.DupError != "" || matches.Load() != 2 || !waited.Load() || j.ClientDir != parent {
+		t.Fatalf("lot : DupError %q, %d recherches, attente %v", j.DupError, matches.Load(), waited.Load())
+	}
+	wait(t, func() bool { g, _ := m.Get(j.ID); return g.State == StReady })
+	// L'envoi refusé une fois par un 429 repart seul et la release est publiée.
+	if err := m.PublishCtx(ctx, j.ID, map[string]string{"categoryId": "11", "releaseName": "Film.2024.1080p.WEB.H264-D3X"}); err != nil {
+		t.Fatal(err)
+	}
+	wait(t, func() bool { g, _ := m.Get(j.ID); return g.State != StPublishing })
+	if g, _ := m.Get(j.ID); g.Published == nil || g.Error != "" || uploads.Load() != 2 {
+		t.Fatalf("envoi : publiée %v, erreur %q, %d envois", g.Published, g.Error, uploads.Load())
+	}
+}

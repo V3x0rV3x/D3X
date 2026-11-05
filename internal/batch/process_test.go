@@ -2,9 +2,15 @@ package batch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -637,5 +643,148 @@ func TestProcessReleaseName(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("le nom de la vidéo ne passe pas la règle de réupload : %v", names)
+	}
+}
+
+// Lot de grande taille (Encrypted_Shards, 05/11/26 : erreurs en série vers la
+// 60e release) : chaque appel au site reçoit le contexte du lot, avec son
+// Retry ; un 429 attend la pause demandée, que l'état du lot décompte, puis la
+// release suit son cours au lieu de tomber en erreur.
+func TestProcessSiteRateLimit(t *testing.T) {
+	var calls atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			io.WriteString(w, `{"error":"rate_limited"}`)
+			return
+		}
+		io.WriteString(w, `{"results":[{"type":"movie","id":7,"title":"Titre","year":"2020"}]}`)
+	}))
+	defer ts.Close()
+	v := v3x.New(ts.URL, "k", "test")
+
+	d, _ := happy(releases.Entry{Name: "A", Path: "/r/A", Video: true, Size: 10})
+	d.tmdbCtx = func(ctx context.Context, q string) ([]Work, error) {
+		raw, err := v.TMDB(ctx, "search", url.Values{"q": {q}})
+		if err != nil {
+			return nil, err
+		}
+		var out struct {
+			Results []Work `json:"results"`
+		}
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return nil, err
+		}
+		return out.Results, nil
+	}
+	e := quick(d)
+	if _, err := e.Start(Spec{Dir: "/r", Source: "local", Paths: []string{"/r/A"}, Options: Options{Sim: true}}); err != nil {
+		t.Fatal(err)
+	}
+	waiting := ""
+	for i := 0; i < 400 && waiting == ""; i++ {
+		if s := e.State().Detail; strings.HasPrefix(s, "V3X limite les appels, reprise dans ") {
+			waiting = s
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	r := waitDone(t, e)
+	if en := r.Entries[0]; en.State != "simulated" {
+		t.Fatalf("après la pause : %+v", en)
+	}
+	if waiting == "" {
+		t.Error("la pause demandée par V3X n'est pas dite dans l'état du lot")
+	}
+	if n := calls.Load(); n != 2 {
+		t.Errorf("%d recherches TMDB, attendu 2 (le 429 puis le nouvel essai)", n)
+	}
+	if r.Detail != "" {
+		t.Errorf("lot fini, détail %q", r.Detail)
+	}
+
+	// Une vraie publication, et une fiche gardée : tous les appels au site
+	// portent le Retry du lot.
+	d, _ = happy(releases.Entry{Name: "A", Path: "/r/A", Video: true, Size: 10}, releases.Entry{Name: "X", Path: "/r/X", Video: true, Size: 10})
+	d.last = map[string]journal.Event{"/r/X": {Kind: "batch_ready"}}
+	d.prepared = func(key string) (*Prepared, bool) {
+		return &Prepared{Name: "X", Fields: map[string]string{"releaseName": "X", "categoryId": "11"}}, key == "/r/X"
+	}
+	d.requests = func(string) (json.RawMessage, error) { return nil, nil }
+	r = run(t, quick(d), Options{}, "/r/A", "/r/X")
+	for _, en := range r.Entries {
+		if en.State != "published" {
+			t.Fatalf("publication : %+v", en)
+		}
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if len(d.noRetry) != 0 {
+		t.Fatalf("appels au site sans le Retry du lot : %v", d.noRetry)
+	}
+}
+
+// Un appel au site raté ne range jamais la release à l'aveugle : erreur, avec
+// la raison, et non « œuvre TMDB incertaine » ou « simulée », qu'elle n'aurait
+// pas eues à l'analyse suivante (Encrypted_Shards, 05/11/26 : des releases
+// changeaient d'onglet d'une simulation à l'autre).
+func TestProcessSiteFailure(t *testing.T) {
+	limited := &v3x.APIError{Status: http.StatusTooManyRequests}
+	for _, tc := range []struct {
+		name  string
+		sim   bool
+		setup func(d *fakeDeps, p *pubFake)
+		state string
+		want  string
+	}{
+		{"recherche TMDB ratée", true, func(d *fakeDeps, p *pubFake) {
+			d.tmdb = func(string) ([]Work, error) { return nil, limited }
+		}, "error", "recherche TMDB impossible : V3X limite les appels, réessaie dans un moment"},
+		{"recherche TMDB sans résultat", true, func(d *fakeDeps, p *pubFake) {
+			d.tmdb = func(string) ([]Work, error) { return nil, nil }
+		}, "review", "œuvre TMDB incertaine"},
+		{"REPACK non vérifiés", true, func(d *fakeDeps, p *pubFake) {
+			d.redo = func(string) (string, error) { return "", errors.New("V3X injoignable : délai dépassé") }
+		}, "error", "recherche des REPACK sur V3X impossible : V3X injoignable : délai dépassé"},
+		{"REPACK non vérifiés, pour de vrai", false, func(d *fakeDeps, p *pubFake) {
+			d.redo = func(string) (string, error) { return "", limited }
+		}, "error", "recherche des REPACK sur V3X impossible : V3X limite les appels, réessaie dans un moment"},
+		{"doublon non vérifié", true, func(d *fakeDeps, p *pubFake) {
+			p.make = func(path string) *publish.Job {
+				j := videoJob(path)
+				j.DupError = limited.Error()
+				return j
+			}
+		}, "error", "recherche de doublon sur V3X impossible : V3X limite les appels, réessaie dans un moment"},
+		{"doublon non vérifié, fiche gardée", false, func(d *fakeDeps, p *pubFake) {
+			d.last = map[string]journal.Event{"/r/A": {Kind: "batch_ready"}}
+			d.prepared = func(string) (*Prepared, bool) {
+				return &Prepared{Name: "A", Fields: map[string]string{"releaseName": "A", "categoryId": "11"}}, true
+			}
+			p.make = func(path string) *publish.Job {
+				j := videoJob(path)
+				j.DupError = limited.Error()
+				return j
+			}
+		}, "error", "recherche de doublon sur V3X impossible : V3X limite les appels, réessaie dans un moment"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d, p := happy(releases.Entry{Name: "A", Path: "/r/A", Video: true, Size: 10})
+			tc.setup(d, p)
+			r := run(t, quick(d), Options{Sim: tc.sim}, "/r/A")
+			en := r.Entries[0]
+			if en.State != tc.state || (tc.state == "error" && en.Detail != tc.want) || !strings.Contains(en.Detail, tc.want) {
+				t.Fatalf("%+v, attendu %s « %s »", en, tc.state, tc.want)
+			}
+			if tc.state != "error" {
+				return
+			}
+			if !d.wasCancelled("job-/r/A") || len(p.fields) != 0 {
+				t.Errorf("publication non annulée (%v) ou envoyée (%v)", d.wasCancelled("job-/r/A"), p.fields)
+			}
+			if ev := d.eventsCopy(); len(ev) != 1 || ev[0].Kind != "batch_error" {
+				t.Errorf("journal : %v", ev)
+			}
+		})
 	}
 }

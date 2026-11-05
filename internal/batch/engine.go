@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"strconv"
 	"sync"
 	"time"
 
 	"github.com/V3x0rV3x/D3X/internal/journal"
 	"github.com/V3x0rV3x/D3X/internal/source"
+	"github.com/V3x0rV3x/D3X/internal/v3x"
 )
 
 // Engine mène un lot : les releases cochées, une par une, avec les mêmes
@@ -28,6 +30,9 @@ type Engine struct {
 	src    source.Source
 	stopc  chan struct{}
 	cancel context.CancelFunc
+	// waitTill : V3X a demandé une pause (429) jusque-là ; le lot attend et
+	// l'état le dit à la place du détail (« reprise dans N s »).
+	waitTill time.Time
 }
 
 // New prépare le moteur.
@@ -38,11 +43,36 @@ func New(d Deps) *Engine {
 // lot : le run en cours tel que la boucle le voit. Seule la boucle y écrit
 // (job) : elle le lit sans le verrou de l'Engine.
 type lot struct {
-	r     *Run
-	src   source.Source
-	ctx   context.Context // coupé par l'arrêt : sert au seul calcul du MediaInfo
+	r   *Run
+	src source.Source
+	ctx context.Context // coupé par l'arrêt : sert au seul calcul du MediaInfo
+	// site : le contexte des appels à V3X. Jamais coupé (l'arrêt ne change pas
+	// l'issue de la release en cours, « Arrêter » pendant une pause attend donc
+	// sa fin), il porte le Retry du lot : un 429 attend la pause demandée par
+	// le site puis réessaie, au lieu de mettre en erreur toutes les releases
+	// suivantes (Encrypted_Shards, 05/11/26 : erreurs en série vers la 60e).
+	site  context.Context
 	stopc <-chan struct{}
 	job   string // publication démarrée pour la release en cours, pas encore annulée
+}
+
+// siteWaitText : le détail du lot pendant une pause demandée par V3X.
+func siteWaitText(left time.Duration) string {
+	return fmt.Sprintf("V3X limite les appels, reprise dans %d s", int(math.Ceil(left.Seconds())))
+}
+
+// siteRetry : le Retry des appels du lot. La pause demandée est notée
+// (waitTill) : l'état du lot la décompte, chaque seconde, à la place du détail.
+func (e *Engine) siteRetry() *v3x.Retry {
+	return &v3x.Retry{OnWait: func(d time.Duration) {
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		if d > 0 {
+			e.waitTill = time.Now().Add(d)
+		} else {
+			e.waitTill = time.Time{}
+		}
+	}}
 }
 
 func (l *lot) stopped() bool {
@@ -155,10 +185,11 @@ func (e *Engine) Start(spec Spec) (*Run, error) {
 	}
 	rctx, rcancel := context.WithCancel(context.Background())
 	stopc := make(chan struct{})
-	e.run, e.src, e.stopc, e.cancel = r, src, stopc, rcancel
+	e.run, e.src, e.stopc, e.cancel, e.waitTill = r, src, stopc, rcancel, time.Time{}
 	out := e.copyLocked()
 	e.mu.Unlock()
-	go e.loop(&lot{r: r, src: src, ctx: rctx, stopc: stopc})
+	site := v3x.WithRetry(context.Background(), e.siteRetry())
+	go e.loop(&lot{r: r, src: src, ctx: rctx, site: site, stopc: stopc})
 	return out, nil
 }
 
@@ -224,6 +255,9 @@ func (e *Engine) copyLocked() *Run {
 		return nil
 	}
 	c := *e.run
+	if left := time.Until(e.waitTill); left > 0 && c.State != StDone {
+		c.Detail = siteWaitText(left)
+	}
 	c.Entries = make([]*Entry, len(e.run.Entries))
 	for i, en := range e.run.Entries {
 		x := *en
@@ -333,6 +367,7 @@ func (e *Engine) loop(l *lot) {
 			}
 		}
 		r.State, r.Current, r.Label, r.Detail, r.EndedAt = StDone, "", "", "", time.Now()
+		e.waitTill = time.Time{}
 		e.cancel() // plus rien n'attend sur le contexte du lot
 	})
 }

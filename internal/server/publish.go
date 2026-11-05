@@ -473,7 +473,7 @@ func (s *Server) pubPublish(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, errors.New("choisis une catégorie"))
 		return
 	}
-	if err := s.publishGuarded(r.PathValue("id"), fields); err != nil {
+	if err := s.publishGuarded(context.Background(), r.PathValue("id"), fields); err != nil {
 		fail(w, http.StatusConflict, err)
 		return
 	}

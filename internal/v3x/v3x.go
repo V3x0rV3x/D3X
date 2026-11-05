@@ -64,12 +64,67 @@ func (e *APIError) Error() string {
 
 // Retry : un 429 attend la pause demandée puis réessaie (6 essais au plus).
 // Réservé aux traitements en lot : une action cliquée renvoie l'erreur tout de
-// suite au lieu d'un bouton qui tourne des minutes.
+// suite au lieu d'un bouton qui tourne des minutes. Passé à l'appel, ou porté
+// par son contexte (WithRetry) pour les appels qui n'en prennent pas.
 type Retry struct {
 	OnWait func(d time.Duration) // prévenir la page (« reprise dans N s »)
 }
 
 const maxPause = 2 * time.Minute
+
+// RetryBudget : l'attente la plus longue qu'un Retry ajoute à un appel (une
+// pause déjà en cours, puis une par nouvel essai, maxPause chacune au plus).
+const RetryBudget = 6 * maxPause
+
+type retryKey struct{}
+
+// WithRetry : les appels au site faits avec ce contexte attendent et
+// réessaient sur un 429, même ceux qui ne prennent pas de Retry (contexte de
+// publication, TMDB, fiche, versions, envoi d'une release…). Pour le Lot,
+// qui enchaîne les appels sans personne devant (Encrypted_Shards, 05/11/26 :
+// erreurs en série vers la 60e release) ; jamais pour une action cliquée.
+func WithRetry(ctx context.Context, r *Retry) context.Context {
+	if r == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, retryKey{}, r)
+}
+
+// retryOf : r, sinon celui que porte le contexte ; nil : un 429 remonte tout de suite.
+func retryOf(ctx context.Context, r *Retry) *Retry {
+	if r != nil {
+		return r
+	}
+	r, _ = ctx.Value(retryKey{}).(*Retry)
+	return r
+}
+
+// Timeout : le délai à donner à un appel au site qui prend d au plus. Avec un
+// Retry dans le contexte, les pauses demandées par le site s'y ajoutent
+// (RetryBudget) : sans elles, le délai couperait l'attente au lieu de la
+// laisser reprendre l'appel. Sans Retry : d, inchangé.
+func Timeout(ctx context.Context, d time.Duration) time.Duration {
+	if retryOf(ctx, nil) != nil {
+		return d + RetryBudget
+	}
+	return d
+}
+
+// pause : un 429 reçu à l'essai attempt (0 pour le premier). Vrai : la pause
+// demandée, partagée par tous les appels, est posée et l'appel peut réessayer ;
+// faux : elle dépasse maxPause, l'erreur remonte.
+func (c *Client) pause(h http.Header, attempt int) bool {
+	d := retryAfter(h, attempt)
+	if d > maxPause {
+		return false
+	}
+	c.mu.Lock()
+	if till := time.Now().Add(d); till.After(c.pauseTill) {
+		c.pauseTill = till
+	}
+	c.mu.Unlock()
+	return true
+}
 
 // retryAfter lit la pause demandée. Une seconde de marge : certains serveurs
 // répondent « Retry-After: 0 » pendant la dernière seconde d'une fenêtre encore
@@ -118,6 +173,7 @@ func (c *Client) waitPause(ctx context.Context, r *Retry) error {
 }
 
 func (c *Client) send(ctx context.Context, r *Retry, build func() (*http.Request, error)) ([]byte, error) {
+	r = retryOf(ctx, r)
 	for attempt := 0; ; attempt++ {
 		if r != nil {
 			if err := c.waitPause(ctx, r); err != nil {
@@ -136,15 +192,9 @@ func (c *Client) send(ctx context.Context, r *Retry, build func() (*http.Request
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
 		resp.Body.Close()
 		if resp.StatusCode == http.StatusTooManyRequests && r != nil && attempt < 5 {
-			d := retryAfter(resp.Header, attempt)
-			if d > maxPause {
+			if !c.pause(resp.Header, attempt) {
 				return nil, &APIError{Status: resp.StatusCode, Code: "rate_limited"}
 			}
-			c.mu.Lock()
-			if till := time.Now().Add(d); till.After(c.pauseTill) {
-				c.pauseTill = till
-			}
-			c.mu.Unlock()
 			continue
 		}
 		if resp.StatusCode >= 300 {

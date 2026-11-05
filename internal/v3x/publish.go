@@ -130,7 +130,8 @@ type UploadError struct {
 func (e *UploadError) Error() string { return fmt.Sprintf("V3X a refusé la publication : %s", e.Code) }
 
 // Upload publie une release : le .torrent et les champs de la fiche, comme la
-// page d'upload du site.
+// page d'upload du site. Avec un Retry dans le contexte (le Lot), un 429, qui
+// n'a rien publié, attend la pause demandée et renvoie la même release.
 func (c *Client) Upload(ctx context.Context, torrentName string, raw []byte, fields map[string]string) (*Uploaded, error) {
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
@@ -146,31 +147,42 @@ func (c *Client) Upload(ctx context.Context, torrentName string, raw []byte, fie
 	fw.Write(raw)
 	w.Close()
 	body := buf.Bytes()
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, c.Base+"/api/torrents", bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer "+c.Key)
-	req.Header.Set("Content-Type", w.FormDataContentType())
-	req.Header.Set("User-Agent", c.ua)
-	resp, err := c.hc.Do(req)
-	if err != nil {
-		return nil, unreachable(err)
-	}
-	defer resp.Body.Close()
-	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-	if resp.StatusCode >= 300 {
-		var e struct {
-			Error string `json:"error"`
+	r := retryOf(ctx, nil)
+	for attempt := 0; ; attempt++ {
+		if r != nil {
+			if err := c.waitPause(ctx, r); err != nil {
+				return nil, err
+			}
 		}
-		_ = json.Unmarshal(data, &e)
-		if e.Error == "" {
-			e.Error = fmt.Sprintf("HTTP %d", resp.StatusCode)
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, c.Base+"/api/torrents", bytes.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+c.Key)
+		req.Header.Set("Content-Type", w.FormDataContentType())
+		req.Header.Set("User-Agent", c.ua)
+		resp, err := c.hc.Do(req)
+		if err != nil {
+			return nil, unreachable(err)
 		}
-		return nil, &UploadError{Status: resp.StatusCode, Code: e.Error, Body: data}
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusTooManyRequests && r != nil && attempt < 5 && c.pause(resp.Header, attempt) {
+			continue
+		}
+		if resp.StatusCode >= 300 {
+			var e struct {
+				Error string `json:"error"`
+			}
+			_ = json.Unmarshal(data, &e)
+			if e.Error == "" {
+				e.Error = fmt.Sprintf("HTTP %d", resp.StatusCode)
+			}
+			return nil, &UploadError{Status: resp.StatusCode, Code: e.Error, Body: data}
+		}
+		var u Uploaded
+		if err := json.Unmarshal(data, &u); err != nil {
+			return nil, err
+		}
+		return &u, nil
 	}
-	var u Uploaded
-	if err := json.Unmarshal(data, &u); err != nil {
-		return nil, err
-	}
-	return &u, nil
 }
 
 // OwnTorrent récupère le .torrent d'une de ses propres releases, même en

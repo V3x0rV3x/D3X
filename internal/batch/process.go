@@ -15,6 +15,7 @@ import (
 	"github.com/V3x0rV3x/D3X/internal/mediainfo"
 	"github.com/V3x0rV3x/D3X/internal/musicbrainz"
 	"github.com/V3x0rV3x/D3X/internal/publish"
+	"github.com/V3x0rV3x/D3X/internal/v3x"
 )
 
 const held = "vérifiée à 100 %, démarre à la fin du lot"
@@ -22,7 +23,9 @@ const held = "vérifiée à 100 %, démarre à la fin du lot"
 func replaceHeld(s string) string { return strings.ReplaceAll(s, held, "seed lancé à la fin du lot") }
 
 // publishWait : au-delà, une publication envoyée est tenue pour sans réponse.
-const publishWait = 6 * time.Minute
+// L'envoi du lot peut attendre les pauses demandées par V3X (v3x.RetryBudget) :
+// elles comptent, sinon une release publiée après une pause serait dite en erreur.
+const publishWait = 6*time.Minute + v3x.RetryBudget
 
 var errNoAnswer = errors.New("pas de réponse du site")
 
@@ -125,11 +128,13 @@ type mbWork struct {
 }
 
 // process traite une release, comme processEntry dans la page. Les appels
-// au site et à la publication prennent context.Background() (le serveur y met
-// ses délais) : l'arrêt du lot ne les coupe jamais, il ne change pas l'issue
-// de la release en cours.
+// au site et à la publication prennent l.site (le serveur y met ses délais) :
+// l'arrêt du lot ne les coupe jamais, il ne change pas l'issue de la release
+// en cours. Un appel au site qui échoue met la release en erreur : le lot ne
+// conclut rien (« à vérifier », « simulée ») d'une réponse qui manque, sans
+// quoi une release changerait d'onglet d'une analyse à l'autre.
 func (e *Engine) process(l *lot, en *Entry) {
-	ctx := context.Background()
+	ctx := l.site
 	r, src := l.r, l.src
 	o := r.Options
 	if en.State == "ready" {
@@ -156,13 +161,18 @@ func (e *Engine) process(l *lot, en *Entry) {
 		return
 	}
 
-	j, err := e.deps.PubStart(src, en.Path)
+	j, err := e.deps.PubStart(ctx, src, en.Path)
 	if err != nil {
 		e.decide(src, en, "error", err.Error(), "")
 		return
 	}
 	l.job = j.ID
 	cancel := func() { e.deps.PubCancel(j.ID); l.job = "" }
+	if j.DupError != "" {
+		cancel()
+		e.decide(src, en, "error", dupCheckFailed(j.DupError), "")
+		return
+	}
 	if !o.Sim { // simulée, la publication est annulée : rien à poser
 		if err := e.deps.PubSetLinks(j.ID, o.Links); err != nil && o.Links {
 			// Refusée : elle partira sur ses fichiers d'origine, la ligne dira pourquoi.
@@ -257,20 +267,28 @@ func (e *Engine) process(l *lot, en *Entry) {
 		work = e.deps.RememberedSeries(seriesTitleOf(f))
 	}
 	if work == nil && f.TmdbQuery != "" && !album {
-		if res, err := e.deps.TMDBSearch(ctx, f.TmdbQuery); err == nil {
-			// Films et séries seulement, comme la page.
-			var mt []Work
-			for _, w := range res {
-				if w.Type == "movie" || w.Type == "tv" {
-					mt = append(mt, w)
-				}
-			}
-			title := f.Analysis.Title
-			if title == "" {
-				title = f.TmdbQuery
-			}
-			work = certainWork(mt, title, year, isSeries)
+		// Recherche ratée (site injoignable, appels limités) : erreur, et non
+		// « œuvre TMDB incertaine », que la même release n'aurait pas eue à
+		// l'analyse suivante (Encrypted_Shards, 05/11/26). Aucun résultat, lui,
+		// est une réponse : l'œuvre reste incertaine.
+		res, err := e.deps.TMDBSearch(ctx, f.TmdbQuery)
+		if err != nil {
+			cancel()
+			e.decide(src, en, "error", "recherche TMDB impossible : "+err.Error(), "")
+			return
 		}
+		// Films et séries seulement, comme la page.
+		var mt []Work
+		for _, w := range res {
+			if w.Type == "movie" || w.Type == "tv" {
+				mt = append(mt, w)
+			}
+		}
+		title := f.Analysis.Title
+		if title == "" {
+			title = f.TmdbQuery
+		}
+		work = certainWork(mt, title, year, isSeries)
 	}
 	if work != nil {
 		ref := work.Type + "/" + string(work.ID)
@@ -334,7 +352,15 @@ func (e *Engine) process(l *lot, en *Entry) {
 	if cat != nil {
 		catSlug = cat.Slug
 	}
-	if redo, err := e.deps.Redo(ctx, name, j.Total, tmdbRef, catSlug); err == nil && redo != "" {
+	// Vérification ratée : erreur, et non une release simulée ou publiée sans
+	// savoir si un REPACK l'a remplacée.
+	redo, err := e.deps.Redo(ctx, name, j.Total, tmdbRef, catSlug)
+	if err != nil {
+		cancel()
+		e.decide(src, en, "error", "recherche des REPACK sur V3X impossible : "+err.Error(), "")
+		return
+	}
+	if redo != "" {
 		reasons = append(reasons, "un REPACK de cette release est déjà sur V3X : « "+redo+" »")
 	}
 	if len(reasons) > 0 {
@@ -436,7 +462,7 @@ func (e *Engine) policyStopped(l *lot, en *Entry, names ...string) bool {
 			}
 		}
 	})
-	stop, err := e.deps.Policy(context.Background(), q)
+	stop, err := e.deps.Policy(l.site, q)
 	if err != nil {
 		e.decide(l.src, en, "error", "règles de réupload des teams illisibles, rien n'est publié : "+err.Error(), "")
 		return true
@@ -446,6 +472,13 @@ func (e *Engine) policyStopped(l *lot, en *Entry, names ...string) bool {
 		return true
 	}
 	return false
+}
+
+// dupCheckFailed : la raison d'une release en erreur parce que la recherche de
+// doublon sur V3X n'a pas répondu (publish.Job.DupError) : sans elle, une
+// release déjà sur V3X serait simulée, ou hachée pour rien.
+func dupCheckFailed(why string) string {
+	return "recherche de doublon sur V3X impossible : " + why
 }
 
 func contains(list []string, s string) bool {
@@ -479,13 +512,18 @@ func (e *Engine) processReady(l *lot, en *Entry) {
 		e.set(func(*Run) { en.Detail = "serait publiée avec ta fiche : " + summary })
 		return
 	}
-	j, err := e.deps.PubStart(src, en.Path)
+	j, err := e.deps.PubStart(l.site, src, en.Path)
 	if err != nil {
 		e.decide(src, en, "error", err.Error(), "")
 		return
 	}
 	l.job = j.ID
 	cancel := func() { e.deps.PubCancel(j.ID); l.job = "" }
+	if j.DupError != "" {
+		cancel()
+		e.decide(src, en, "error", dupCheckFailed(j.DupError), "")
+		return
+	}
 	if err := e.deps.PubSetLinks(j.ID, r.Options.Links); err != nil && r.Options.Links {
 		// Refusée : elle partira sur ses fichiers d'origine, la ligne dira pourquoi.
 		e.set(func(*Run) { en.linksRefused = err.Error() })
@@ -507,7 +545,7 @@ func (e *Engine) processReady(l *lot, en *Entry) {
 // publishWith publie le job prêt avec ces champs ; vrai si V3X l'a acceptée.
 func (e *Engine) publishWith(l *lot, en *Entry, j *publish.Job, fields map[string]string, summary string) bool {
 	src := l.src
-	if err := e.deps.PubPublish(j.ID, fields); err != nil {
+	if err := e.deps.PubPublish(l.site, j.ID, fields); err != nil {
 		e.decide(src, en, "error", err.Error(), "")
 		return false
 	}
@@ -535,7 +573,7 @@ func (e *Engine) publishWith(l *lot, en *Entry, j *publish.Job, fields map[strin
 	}
 	var reqs []byte
 	// Seulement une liste non vide de demandes.
-	if raw, err := e.deps.RequestsFor(context.Background(), name); err == nil {
+	if raw, err := e.deps.RequestsFor(l.site, name); err == nil {
 		if t := bytes.TrimSpace(raw); len(t) > 2 && t[0] == '[' {
 			reqs = t
 		}

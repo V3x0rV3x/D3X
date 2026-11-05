@@ -39,6 +39,7 @@ type fakeDeps struct {
 	context    func() (*Context, error)
 	fiche      func(jobID string, in FicheInput) (*Fiche, error)
 	tmdb       func(q string) ([]Work, error)
+	tmdbCtx    func(ctx context.Context, q string) ([]Work, error) // à la place de tmdb, avec le contexte du lot
 	redo       func(name string) (string, error)
 	requests   func(name string) (json.RawMessage, error)
 	mb         func(jobID string) (*musicbrainz.Result, error)
@@ -49,6 +50,18 @@ type fakeDeps struct {
 	policy     func(q PolicyQuery) (*PolicyStop, error)
 	cancelled  []string
 	dropped    []string
+	noRetry    []string // appels au site reçus sans le Retry du lot
+}
+
+// sawCtx : chaque appel qui touche V3X doit recevoir le contexte du lot, avec
+// son Retry (un 429 attend et réessaie au lieu de mettre la release en erreur).
+func (d *fakeDeps) sawCtx(ctx context.Context, call string) {
+	if v3x.Timeout(ctx, 0) > 0 {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.noRetry = append(d.noRetry, call)
 }
 
 func (d *fakeDeps) PubSetLinks(id string, on bool) error {
@@ -82,7 +95,8 @@ func (d *fakeDeps) Entries(_ context.Context, _ source.Source, paths []string) (
 	return out, nil
 }
 func (d *fakeDeps) LastByPath() map[string]journal.Event { return d.last }
-func (d *fakeDeps) PubStart(_ source.Source, path string) (*publish.Job, error) {
+func (d *fakeDeps) PubStart(ctx context.Context, _ source.Source, path string) (*publish.Job, error) {
+	d.sawCtx(ctx, "PubStart")
 	if d.pubStart == nil {
 		return nil, errors.New("pas de publication dans ce test")
 	}
@@ -99,7 +113,8 @@ func (d *fakeDeps) PubCancel(id string) {
 	d.cancelled = append(d.cancelled, id)
 	d.mu.Unlock()
 }
-func (d *fakeDeps) PubPublish(id string, fields map[string]string) error {
+func (d *fakeDeps) PubPublish(ctx context.Context, id string, fields map[string]string) error {
+	d.sawCtx(ctx, "PubPublish")
 	if d.pubPublish == nil {
 		return errors.New("pas de publication dans ce test")
 	}
@@ -113,6 +128,7 @@ func (d *fakeDeps) PubRead(_ context.Context, id string, i int, off, n int64) ([
 }
 func (d *fakeDeps) PubFilePath(string, int) (string, bool) { return "/x/f.mkv", true }
 func (d *fakeDeps) Context(ctx context.Context) (*Context, error) {
+	d.sawCtx(ctx, "Context")
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -122,6 +138,7 @@ func (d *fakeDeps) Context(ctx context.Context) (*Context, error) {
 	return d.context()
 }
 func (d *fakeDeps) Fiche(ctx context.Context, jobID string, in FicheInput) (*Fiche, error) {
+	d.sawCtx(ctx, "Fiche")
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -133,6 +150,10 @@ func (d *fakeDeps) Fiche(ctx context.Context, jobID string, in FicheInput) (*Fic
 
 // Comme un vrai appel HTTP : un contexte coupé pendant l'appel le fait échouer.
 func (d *fakeDeps) TMDBSearch(ctx context.Context, q string) ([]Work, error) {
+	d.sawCtx(ctx, "TMDBSearch")
+	if d.tmdbCtx != nil {
+		return d.tmdbCtx(ctx, q)
+	}
 	if d.tmdb == nil {
 		return nil, nil
 	}
@@ -142,19 +163,22 @@ func (d *fakeDeps) TMDBSearch(ctx context.Context, q string) ([]Work, error) {
 	}
 	return res, err
 }
-func (d *fakeDeps) Redo(_ context.Context, name string, _ int64, _, _ string) (string, error) {
+func (d *fakeDeps) Redo(ctx context.Context, name string, _ int64, _, _ string) (string, error) {
+	d.sawCtx(ctx, "Redo")
 	if d.redo == nil {
 		return "", nil
 	}
 	return d.redo(name)
 }
-func (d *fakeDeps) RequestsFor(_ context.Context, name string) (json.RawMessage, error) {
+func (d *fakeDeps) RequestsFor(ctx context.Context, name string) (json.RawMessage, error) {
+	d.sawCtx(ctx, "RequestsFor")
 	if d.requests == nil {
 		return nil, nil
 	}
 	return d.requests(name)
 }
-func (d *fakeDeps) Policy(_ context.Context, q PolicyQuery) (*PolicyStop, error) {
+func (d *fakeDeps) Policy(ctx context.Context, q PolicyQuery) (*PolicyStop, error) {
+	d.sawCtx(ctx, "Policy")
 	if d.policy == nil {
 		return nil, nil
 	}

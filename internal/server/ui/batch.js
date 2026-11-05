@@ -18,6 +18,7 @@ const lot = {
   gen: 0, // un par lot lancé d'ici : écarte un suivi parti avant
   poll: null,
   calmUntil: 0, // « Lancer le lot » grisé jusque-là, juste après la fin d'un lot
+  saving: null, // remise en attente en cours d'écriture au journal (lotReset)
   skipTags: [], // réglage « Étiquettes à ne jamais publier », tel que D3X le rend
   skipSet: new Set(), // le même, en minuscules
   tagged: false, // étiquettes à ne jamais publier réglées et au moins un client : la colonne « Étiquettes » s'affiche
@@ -70,6 +71,36 @@ function lotBlocked(e) {
 // ou pas de nom de release).
 function lotOff(e) {
   return !!e.skipped || lotBlocked(e);
+}
+
+// lotHasBox : la ligne a une case qu'on peut cocher (ni publiée, ni déjà
+// présente, ni en erreur, ni écartée).
+function lotHasBox(e) {
+  return !lotOff(e) && e.state !== "published" && e.state !== "duplicate" && e.state !== "error";
+}
+
+// lotTakes : la release est cochée et « Lancer le lot » la prendrait.
+function lotTakes(e) {
+  return e.checked && !lotOff(e) && (e.state === "pending" || e.state === "ready" || e.state === "review" || e.state === "simulated");
+}
+
+// Case du haut (Encrypted_Shards, 05/11/26) : les cases restent cochées d'un
+// onglet à l'autre, et « À vérifier », « Simulé » et « Prête » le sont d'office
+// après une liste ou un lot ; « tout cocher » dans « En attente » laissait donc
+// le lot prendre aussi ces releases-là, hors de vue. Cochée, elle coche les
+// releases affichées de l'onglet ouvert et décoche celles des autres onglets :
+// le lot prend cet onglet, et lui seul. Décochée, elle décoche l'onglet ouvert.
+// Une case de ligne coche toujours en plus, d'un onglet à l'autre.
+function lotCheckTab(on) {
+  const show = showSkipped();
+  for (const e of lot.entries) {
+    if (e.state === lot.tab) {
+      if (lotVisible(e, show) && lotHasBox(e)) e.checked = on;
+    } else if (on) {
+      e.checked = false;
+    }
+  }
+  lotRender();
 }
 
 // offDetail : le détail d'une release remise « En attente » : la raison qui
@@ -259,8 +290,11 @@ function lotRender() {
   const help = LOT_TABS.find((t) => t[0] === lot.tab);
   empty.textContent = list.length ? "" : "Rien ici. " + (help ? help[2] : "");
   empty.classList.toggle("hidden", list.length > 0);
-  const checkable = list.filter((e) => !lotOff(e) && e.state !== "published" && e.state !== "duplicate" && e.state !== "error");
-  $("#b-all").checked = checkable.length > 0 && checkable.every((e) => e.checked);
+  const checkable = list.filter(lotHasBox);
+  // Cochée quand le lot prendrait exactement cet onglet : toutes ses releases,
+  // et aucune d'un autre onglet (voir lotCheckTab).
+  const elsewhere = lot.entries.some((e) => e.state !== lot.tab && lotTakes(e));
+  $("#b-all").checked = checkable.length > 0 && checkable.every((e) => e.checked) && !elsewhere;
   $("#b-all").disabled = lot.running || checkable.length === 0;
   // Pendant un lot, ses options et le choix du dossier sont figés : un
   // « Lister » serait défait au prochain suivi du lot.
@@ -285,17 +319,28 @@ function lotResettable() {
   return lot.entries.filter((e) => e.state === lot.tab && !e.error && lotVisible(e, show));
 }
 
+// La page d'abord, d'un coup, puis le journal release par release : avec des
+// dizaines de releases, l'onglet ouvert restait affiché pendant
+// l'enregistrement, et un second clic reprenait celles pas encore passées.
+// « Lancer le lot » attend la fin de l'enregistrement (lot.saving) : D3X relit
+// l'état de chaque release dans le journal au départ du lot.
 async function lotReset() {
   const list = lotResettable();
   for (const e of list) {
     e.state = "pending";
     e.detail = offDetail(e);
     e.checked = !lotOff(e);
-    try { await api("/ui/batch/decision", { path: e.path, source: lot.source, name: e.name, kind: "batch_reset", detail: "" }); } catch (err) { /* rien */ }
   }
   lot.tab = "pending";
   lotRender();
   toast(list.length + " " + plural(list.length, "release remise", "releases remises") + " en attente.", "ok");
+  const source = lot.source;
+  lot.saving = Promise.resolve(lot.saving).then(async () => {
+    for (const e of list) {
+      try { await api("/ui/batch/decision", { path: e.path, source, name: e.name, kind: "batch_reset", detail: "" }); } catch (err) { /* rien */ }
+    }
+  });
+  await lot.saving;
 }
 
 function lotRow(e) {
@@ -388,7 +433,7 @@ function lotBar() {
   const show = $("#view-batch") && !$("#view-batch").classList.contains("hidden") && lot.entries.length > 0;
   bar.classList.toggle("hidden", !show);
   if (!show) return;
-  const checked = lot.entries.filter((e) => e.checked && !lotOff(e) && (e.state === "pending" || e.state === "ready" || e.state === "review" || e.state === "simulated"));
+  const checked = lot.entries.filter(lotTakes);
   const n = checked.length;
   // Les cases restent cochées d'un onglet à l'autre et le lot les prend
   // toutes : on dit combien sont dans l'onglet ouvert, et « Tout décocher »
@@ -481,11 +526,12 @@ function lotOptions() {
 // un redémarrage du conteneur (bertho-zero, ticket n°3, 27/10/26).
 async function lotRun(ev) {
   if (lot.running || !ev || !ev.isTrusted || Date.now() < lot.calmUntil) return;
+  await lot.saving; // une remise en attente pas encore écrite au journal
   if (!pub.ctx) await loadCtx();
   if (!pub.ctx) return toast("Publication impossible : " + (pub.ctxError || "V3X injoignable"), "bad");
   // Seulement ce qui est coché ET affiché à l'écran : un dossier apparu entre-temps
   // n'est jamais publié sans avoir été vu.
-  const todo = lot.entries.filter((e) => e.checked && !lotOff(e) && (e.state === "pending" || e.state === "ready" || e.state === "review" || e.state === "simulated"));
+  const todo = lot.entries.filter(lotTakes);
   if (!todo.length) return;
   try {
     // D3X refuse une demande faite pour un lancement d'avant le sien.
@@ -744,10 +790,7 @@ function bindBatch() {
     lotRender();
   });
   $("#b-reset").addEventListener("click", lotReset);
-  $("#b-all").addEventListener("change", (ev) => {
-    for (const e of lot.entries) if (!lotOff(e) && e.state === lot.tab && e.state !== "published" && e.state !== "duplicate" && e.state !== "error") e.checked = ev.target.checked;
-    lotRender();
-  });
+  $("#b-all").addEventListener("change", (ev) => lotCheckTab(ev.target.checked));
 }
 
 bindBatch();

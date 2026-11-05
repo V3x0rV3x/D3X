@@ -14,7 +14,9 @@ import (
 )
 
 // Deps : ce que le lot demande au reste de D3X. Le serveur les fournit ; les
-// tests les simulent. Jamais de HTTP ici.
+// tests les simulent. Jamais de HTTP ici. Les appels qui touchent V3X
+// reçoivent le contexte du lot (lot.site) : jamais coupé par l'arrêt, il porte
+// le Retry du lot (v3x.WithRetry), qui attend et réessaie sur un 429.
 type Deps interface {
 	Source(id string) (source.Source, error)
 	Exclude() []string
@@ -29,11 +31,12 @@ type Deps interface {
 	// SkipTags : les étiquettes à ne jamais publier, en minuscules (Réglages ▸ Ajouts).
 	SkipTags() map[string]bool
 
-	// Publication (publish.Manager).
-	PubStart(src source.Source, path string) (*publish.Job, error)
+	// Publication (publish.Manager). PubStart cherche un doublon sur V3X
+	// (Job.DupError s'il n'a pas répondu) ; PubPublish envoie la release.
+	PubStart(ctx context.Context, src source.Source, path string) (*publish.Job, error)
 	PubGet(id string) (*publish.Job, bool)
 	PubCancel(id string)
-	PubPublish(id string, fields map[string]string) error
+	PubPublish(ctx context.Context, id string, fields map[string]string) error
 	// PubSetLinks : la publication partira par liens (dossier de liens du
 	// client) ou sur ses fichiers d'origine. Refus (client sans dossier de
 	// liens) : elle part sur l'origine.
@@ -44,6 +47,8 @@ type Deps interface {
 	// V3X.
 	Context(ctx context.Context) (*Context, error)
 	Fiche(ctx context.Context, jobID string, in FicheInput) (*Fiche, error)
+	// TMDBSearch : les œuvres trouvées, vide sans résultat ; erreur si la
+	// recherche n'a pas abouti (le lot ne conclut rien d'une recherche ratée).
 	TMDBSearch(ctx context.Context, q string) ([]Work, error)
 	// Redo : le nom d'un REPACK (ou PROPER) de cette release déjà sur V3X, vide sinon.
 	Redo(ctx context.Context, name string, size int64, tmdbRef, categorySlug string) (string, error)

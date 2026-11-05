@@ -20,8 +20,11 @@ import (
 )
 
 // batchDeps : ce que le lot demande au serveur (batch.Deps), sans HTTP. Le
-// moteur passe context.Background() : chaque appel au site, à la seedbox ou
-// à MusicBrainz porte ici son propre délai.
+// moteur passe un contexte jamais coupé, qui porte son Retry (v3x.WithRetry) :
+// un 429 du site attend la pause demandée puis réessaie. Chaque appel au site,
+// à la seedbox ou à MusicBrainz porte ici son propre délai ; celui d'un appel
+// au site compte en plus les pauses possibles (v3x.Timeout), sans quoi
+// l'attente le couperait au lieu de le reprendre.
 type batchDeps struct{ s *Server }
 
 func (d batchDeps) Source(id string) (source.Source, error) { return d.s.source(id) }
@@ -55,20 +58,20 @@ func (d batchDeps) SkipTags() map[string]bool {
 	return d.s.cfg.SkipTagSet()
 }
 
-func (d batchDeps) PubStart(src source.Source, path string) (*publish.Job, error) {
-	return d.s.pub.Start(src, path)
+func (d batchDeps) PubStart(ctx context.Context, src source.Source, path string) (*publish.Job, error) {
+	return d.s.pub.StartCtx(ctx, src, path)
 }
 func (d batchDeps) PubGet(id string) (*publish.Job, bool) { return d.s.pub.Get(id) }
 func (d batchDeps) PubCancel(id string)                   { d.s.pub.Cancel(id) }
 func (d batchDeps) PubSetLinks(id string, on bool) error  { return d.s.pub.SetLinks(id, on) }
-func (d batchDeps) PubPublish(id string, fields map[string]string) error {
+func (d batchDeps) PubPublish(ctx context.Context, id string, fields map[string]string) error {
 	f := publishFields(fields)
 	// Même garde que la route /ui/pub/{id}/publish, que le lot n'emprunte pas,
 	// et la même porte : les règles de réupload des teams (publishGuarded).
 	if strings.TrimSpace(f["categoryId"]) == "" {
 		return errors.New("choisis une catégorie")
 	}
-	return d.s.publishGuarded(id, f)
+	return d.s.publishGuarded(ctx, id, f)
 }
 func (d batchDeps) PubRead(ctx context.Context, id string, index int, off, n int64) ([]byte, int64, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
@@ -80,7 +83,7 @@ func (d batchDeps) PubFilePath(id string, index int) (string, bool) {
 }
 
 func (d batchDeps) Context(ctx context.Context) (*batch.Context, error) {
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, v3x.Timeout(ctx, 20*time.Second))
 	defer cancel()
 	raw, err := d.s.publishContext(ctx, false)
 	if err != nil {
@@ -102,7 +105,7 @@ func (d batchDeps) Fiche(ctx context.Context, jobID string, in batch.FicheInput)
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, v3x.Timeout(ctx, 30*time.Second))
 	defer cancel()
 	raw, err := v.Fiche(ctx, v3x.FicheRequest{ReleaseName: in.ReleaseName, MediaInfo: in.MediaInfo, TmdbRef: in.TmdbRef, MbRef: in.MbRef, Download: dl, CategorySlug: in.CategorySlug})
 	if err != nil {
@@ -120,7 +123,7 @@ func (d batchDeps) TMDBSearch(ctx context.Context, q string) ([]batch.Work, erro
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, v3x.Timeout(ctx, 20*time.Second))
 	defer cancel()
 	raw, err := v.TMDB(ctx, "search", url.Values{"q": {q}})
 	if err != nil {
@@ -147,7 +150,7 @@ func (d batchDeps) Redo(ctx context.Context, name string, size int64, tmdbRef, c
 	if err != nil {
 		return "", err
 	}
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, v3x.Timeout(ctx, 20*time.Second))
 	defer cancel()
 	q := url.Values{"name": {name}, "size": {strconv.FormatInt(size, 10)}}
 	if tmdbRef != "" {
@@ -183,7 +186,7 @@ func (d batchDeps) RequestsFor(ctx context.Context, name string) (json.RawMessag
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, v3x.Timeout(ctx, 30*time.Second))
 	defer cancel()
 	reqs, err := d.s.requests(ctx, v)
 	if err != nil {

@@ -269,18 +269,19 @@ func (s *Server) jobPolicy(ctx context.Context, id, releaseName string) (*policy
 
 // publishGuarded : la seule porte vers la publication (Publier comme le Lot).
 // Une release sous une règle de réupload ne part jamais, même si la page ou le
-// lot ne l'avaient pas vue.
-func (s *Server) publishGuarded(id string, fields map[string]string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+// lot ne l'avaient pas vue. ctx : context.Background() pour Publier, celui du
+// lot (avec son Retry) pour le Lot.
+func (s *Server) publishGuarded(ctx context.Context, id string, fields map[string]string) error {
+	pctx, cancel := context.WithTimeout(ctx, v3x.Timeout(ctx, 30*time.Second))
 	defer cancel()
-	h, err := s.jobPolicy(ctx, id, fields["releaseName"])
+	h, err := s.jobPolicy(pctx, id, fields["releaseName"])
 	if err != nil {
 		return errors.New("règles de réupload des teams illisibles, rien n'est publié : " + err.Error())
 	}
 	if h != nil {
 		return errors.New(h.label() + " : " + h.motive())
 	}
-	return s.pub.Publish(id, fields)
+	return s.pub.PublishCtx(ctx, id, fields)
 }
 
 // pubPolicy : pour Publier, la règle qui bloque la publication (avertissement
@@ -309,7 +310,7 @@ func (s *Server) pubPolicy(w http.ResponseWriter, r *http.Request) {
 // Policy (batch.Deps) : la règle d'une release du lot, les autres releases du
 // lot comptant comme copies taguées possibles.
 func (d batchDeps) Policy(ctx context.Context, q batch.PolicyQuery) (*batch.PolicyStop, error) {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, v3x.Timeout(ctx, 30*time.Second))
 	defer cancel()
 	extra := make([]copySig, 0, len(q.Others))
 	for _, o := range q.Others {
