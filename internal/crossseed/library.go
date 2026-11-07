@@ -704,6 +704,11 @@ func (e *Engine) addLibrary(ctx context.Context, r *LibRow) (string, string) {
 	for i, p := range r.pairs {
 		cps[i] = io.ClientPath(r.Source, p.local.Path, tg.PathMap)
 	}
+	// Chemin de ce PC qu'aucune correspondance n'a traduit, pour un client qui
+	// tourne sous Linux : on n'ajoute rien, on dit quel dossier déclarer.
+	if len(cps) > 0 && ForeignDir(cps[0], all) {
+		return again, ForeignDirError(commonDir(r.pairs), tg.Name).Error()
+	}
 	// À compléter : seulement dans le dossier de liens, et avec des liens
 	// physiques. Le client y écrit les fichiers manquants, et réécrit à
 	// l'identique les octets des morceaux qu'ils partagent avec tes fichiers :

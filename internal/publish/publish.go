@@ -482,6 +482,14 @@ func (m *Manager) seed(ctx context.Context, j *Job, t crossseed.Target, cfg *con
 	m.mu.Lock()
 	viaLinks, clientDir := j.Links, j.ClientDir
 	m.mu.Unlock()
+	// Dossier de ce PC resté sans traduction pour un client sous Linux : il ne
+	// le lirait pas (ftpktf, 7/11/26). Rien n'est ajouté, le membre corrige
+	// l'emplacement ou déclare le dossier.
+	if clientDir != "" {
+		if list, lerr := t.Client.List(ctx, nil); lerr == nil && crossseed.ForeignDir(clientDir, list) {
+			return crossseed.ForeignDirError(clientDir, t.Name)
+		}
+	}
 	note, via := "", "origin"
 	var err error
 	if viaLinks {
