@@ -740,6 +740,15 @@ func (e *Engine) addLibrary(ctx context.Context, r *LibRow) (string, string) {
 		if err := link(ctx, tg.PathMap, dir, lp, false); err != nil {
 			return again, "liens : " + err.Error()
 		}
+		// Le client lira les liens : les voit-il (meptalon) ?
+		dsts := make([]string, len(lp))
+		for i, p := range lp {
+			dsts[i] = p.Dst
+		}
+		if p := Unseen(ctx, q, dsts); p != "" {
+			_ = link(context.Background(), tg.PathMap, dir, lp, true)
+			return again, UnseenError(p, tg.Name).Error()
+		}
 		hash, err := e.AddAndVerify(ctx, *tg, WithCategory(cfg, ""), r.Key, r.Match.ID, r.raw, dir)
 		if err != nil {
 			if hash == "" || errors.Is(err, ErrInClient) {
@@ -761,6 +770,11 @@ func (e *Engine) addLibrary(ctx context.Context, r *LibRow) (string, string) {
 	}
 	if !q.CanRename() {
 		return again, q.Kind() + " ne sait pas renommer les fichiers d'un torrent : active les liens dans les réglages"
+	}
+	// Le client lira tes fichiers là où ils sont : les voit-il ? D3X les a
+	// lus sur son disque, qui n'est pas forcément celui du client (meptalon).
+	if p := Unseen(ctx, q, cps); p != "" {
+		return again, UnseenError(p, tg.Name).Error()
 	}
 	save := clientCommonDir(cps)
 	if save == "" {

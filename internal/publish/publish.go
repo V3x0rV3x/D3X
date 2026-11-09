@@ -505,7 +505,16 @@ func (m *Manager) seed(ctx context.Context, j *Job, t crossseed.Target, cfg *con
 		}
 	}
 	if via == "origin" {
-		_, err = m.engine.AddAndVerify(ctx, t, cfg, key, id, raw, clientDir)
+		// Le client lira les fichiers d'origine : les voit-il (meptalon) ?
+		unseen := ""
+		if clientDir != "" {
+			unseen = crossseed.UnseenRelease(ctx, t.Client, clientDir, raw)
+		}
+		if unseen != "" {
+			err = crossseed.UnseenError(unseen, t.Name)
+		} else {
+			_, err = m.engine.AddAndVerify(ctx, t, cfg, key, id, raw, clientDir)
+		}
 	}
 	m.mu.Lock()
 	j.SeedVia, j.LinksNote = via, note
@@ -514,6 +523,28 @@ func (m *Manager) seed(ctx context.Context, j *Job, t crossseed.Target, cfg *con
 	}
 	m.mu.Unlock()
 	return err
+}
+
+// clientSees refuse l'envoi quand le client choisi dit ne voir ni les
+// fichiers de la release, ni (seed par liens) son dossier de liens. Un client
+// qui ne sait pas répondre laisse passer. Le membre corrige, puis renvoie.
+func (m *Manager) clientSees(ctx context.Context, env *crossseed.Env, j *Job, raw []byte) error {
+	m.mu.Lock()
+	clientID, dir, viaLinks, linksDir := j.Client, j.ClientDir, j.Links, j.LinksDir
+	m.mu.Unlock()
+	t := env.Get(clientID)
+	if t == nil || dir == "" {
+		return nil
+	}
+	p := crossseed.UnseenRelease(ctx, t.Client, dir, raw)
+	if p == "" {
+		return nil
+	}
+	// Par liens, le client lira son dossier de liens, pas l'origine.
+	if viaLinks && linksDir != "" && crossseed.Unseen(ctx, t.Client, []string{linksDir}) == "" {
+		return nil
+	}
+	return crossseed.UnseenError(p, t.Name)
 }
 
 // placement : un client et où il voit le dossier d'une release.
@@ -638,6 +669,11 @@ func (m *Manager) PublishCtx(parent context.Context, id string, fields map[strin
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), v3x.Timeout(parent, 5*time.Minute))
 		defer cancel()
 		var up *v3x.Uploaded
+		if err == nil {
+			// Avant l'envoi : une release que le client ne pourra pas lire
+			// partirait sans source (meptalon, 9/11/26).
+			err = m.clientSees(ctx, env, j, raw)
+		}
 		if err == nil {
 			up, err = env.V3X.Upload(ctx, name+".torrent", raw, fields)
 		}

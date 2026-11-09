@@ -38,6 +38,9 @@ type fakeClient struct {
 	added   map[string]string
 	started []string
 	srv     *httptest.Server
+	// listing : ce que le client voit de son disque (dossier → chemins
+	// complets de son contenu) ; un dossier absent ne se liste pas (404).
+	listing map[string][]string
 }
 
 type fakeEnt struct {
@@ -94,6 +97,13 @@ func newFakeClient(t *testing.T) *fakeClient {
 			}
 		case "/api/v2/torrents/start":
 			f.started = append(f.started, r.Form.Get("hashes"))
+		case "/api/v2/app/getDirectoryContent":
+			entries, ok := f.listing[r.Form.Get("dirPath")]
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			json.NewEncoder(w).Encode(entries)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -227,6 +237,53 @@ func TestPublishFlow(t *testing.T) {
 	p, _ := torrent.Parse(site.uploaded)
 	if !strings.EqualFold(p.InfoHash, g.InfoHash) || len(fc.started) != 1 {
 		t.Fatalf("info-hash publié %s, suivi %s, démarrés %v", p.InfoHash, g.InfoHash, fc.started)
+	}
+}
+
+// Le client ne voit pas le dossier de la release (meptalon, 9/11/26 : D3X et
+// le client dans deux conteneurs, dossier monté ailleurs) : rien ne part au
+// site, la publication reste prête et dit quoi vérifier. Une fois le dossier
+// visible, elle part et seede.
+func TestPublishClientDoesNotSee(t *testing.T) {
+	parent, dir := release(t)
+	fc := newFakeClient(t)
+	fc.listing = map[string][]string{parent: {filepath.Join(parent, "Autre")}}
+	site := newFakeSite(t)
+	q, _ := client.New(client.Options{URL: fc.srv.URL})
+	clients := envOf(site, crossseed.Target{ID: "c1", Name: "qBittorrent", Client: q})
+	m := New(clients, crossseed.New(clients), "test")
+
+	j, err := m.Start(source.Local{}, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wait(t, func() bool { g, _ := m.Get(j.ID); return g.State == StReady })
+	fields := map[string]string{"categoryId": "11", "releaseName": "Film.2024.1080p.WEB.H264-D3X"}
+	if err := m.Publish(j.ID, fields); err != nil {
+		t.Fatal(err)
+	}
+	wait(t, func() bool { g, _ := m.Get(j.ID); return g.State == StReady && g.Error != "" })
+	g, _ := m.Get(j.ID)
+	if !strings.Contains(g.Error, "ne trouve pas") || !strings.Contains(g.Error, "Film.2024.1080p.WEB.H264-D3X") {
+		t.Fatalf("erreur : %s", g.Error)
+	}
+	fc.mu.Lock()
+	if site.uploaded != nil || len(fc.list) != 0 {
+		fc.mu.Unlock()
+		t.Fatalf("envoyée quand même (site %d octets, client %d)", len(site.uploaded), len(fc.list))
+	}
+	// Le membre monte le dossier : le client le voit, la release part.
+	fc.listing[parent] = []string{filepath.Join(parent, "Film.2024.1080p.WEB.H264-D3X")}
+	fc.mu.Unlock()
+	if err := m.Publish(j.ID, fields); err != nil {
+		t.Fatal(err)
+	}
+	wait(t, func() bool {
+		g, _ := m.Get(j.ID)
+		return g.State == StDone && g.Seed != nil && g.Seed.Status == crossseed.StSeeding
+	})
+	if g, _ := m.Get(j.ID); g.SeedError != "" || site.uploaded == nil {
+		t.Fatalf("seed : %q, envoyée : %v", g.SeedError, site.uploaded != nil)
 	}
 }
 

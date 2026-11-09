@@ -736,6 +736,15 @@ func (e *Engine) linkAndAdd(ctx context.Context, tg Target, cfg *config.Config, 
 	if err := link(ctx, tg.PathMap, dir, lp, false); err != nil {
 		return "", &LinkError{Reason: "liens : " + err.Error(), Err: err}
 	}
+	// Le client lira les liens : les voit-il (meptalon, 9/11/26) ?
+	dsts := make([]string, len(lp))
+	for i, p := range lp {
+		dsts[i] = p.Dst
+	}
+	if p := Unseen(ctx, tg.Client, dsts); p != "" {
+		_ = link(context.Background(), tg.PathMap, dir, lp, true)
+		return "", &LinkError{Reason: UnseenError(p, tg.Name).Error()}
+	}
 	hash, err := e.AddAndVerify(ctx, tg, cfg, key, id, raw, dir)
 	if err != nil {
 		if hash == "" || errors.Is(err, ErrInClient) {
