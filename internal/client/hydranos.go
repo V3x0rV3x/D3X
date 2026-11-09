@@ -293,6 +293,7 @@ func (h *hydranos) engines(ctx context.Context) ([]hEngine, error) {
 // hCopy : la copie d'un torrent dans un moteur.
 type hCopy struct {
 	engine string
+	role   string // race ou hoard
 	row    hRow
 }
 
@@ -328,12 +329,16 @@ func (h *hydranos) copiesIn(ctx context.Context, engines []hEngine, hash string)
 			return nil, errors.New("ce n'est pas Hydranos qui répond à cette adresse")
 		}
 		row.Hash = hash
-		out = append(out, hCopy{e.ID, row})
+		out = append(out, hCopy{engine: e.ID, role: e.Role, row: row})
 	}
 	return out, nil
 }
 
-// pick choisit la copie dont D3X s'occupe : celle qu'il a ajoutée, sinon la première.
+// pick choisit la copie dont D3X s'occupe : celle qu'il a ajoutée ; sinon
+// (D3X redémarré, la mémoire des ajouts est perdue) la première du moteur
+// hoard, où D3X ajoute toujours (mode=hoard) ; sinon la première. Sans ce
+// repli, un arrêt, une vérification ou un retrait après un redémarrage
+// pouvait viser la copie race du membre au lieu de celle de D3X.
 func (h *hydranos) pick(hash string, cs []hCopy) (hCopy, bool) {
 	if len(cs) == 0 {
 		return hCopy{}, false
@@ -343,6 +348,11 @@ func (h *hydranos) pick(hash string, cs []hCopy) (hCopy, bool) {
 	h.mu.Unlock()
 	for _, c := range cs {
 		if want != "" && c.engine == want {
+			return c, true
+		}
+	}
+	for _, c := range cs {
+		if c.role == "hoard" {
 			return c, true
 		}
 	}

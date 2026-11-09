@@ -690,3 +690,21 @@ func TestHydranosAddRequiresTheProofState(t *testing.T) {
 		t.Fatalf("4.8.1 refusée : %v", err)
 	}
 }
+
+// D3X redémarré : il ne sait plus dans quel moteur il a ajouté le torrent.
+// Tenu par race (la copie du membre) et par hoard (celle de D3X, qui ajoute
+// toujours en mode hoard), l'arrêt et le retrait visent hoard, jamais race.
+func TestHydranosPicksHoardAfterRestart(t *testing.T) {
+	f, c, hash := newFake(t, "4.8.1")
+	ctx := context.Background()
+	f.held["race"], f.held["hoard"] = true, true
+	if err := c.Stop(ctx, hash); err != nil || !f.paused["hoard"] || f.paused["race"] {
+		t.Fatalf("arrêt : %v, moteurs arrêtés %v", err, f.paused)
+	}
+	if err := c.RemoveKeepFiles(ctx, hash); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.removed) != 1 || f.removed[0] != "hoard|engine=hoard" || !f.held["race"] {
+		t.Fatalf("retrait : %v, race encore là : %v", f.removed, f.held["race"])
+	}
+}
