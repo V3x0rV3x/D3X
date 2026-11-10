@@ -443,7 +443,7 @@ async function restoreKept(path) {
   }
   $("#f-notmdb").checked = f.noTmdb === "true";
   put("#f-vt", "vt", f.virusTotalUrl);
-  const m = /themoviedb\.org\/(movie|tv)\/(\d+)/.exec(f.tmdbUrl || "");
+  const m = /themoviedb\.org\/(movie|tv|collection)\/(\d+)/.exec(f.tmdbUrl || "");
   if (m) pub.tmdb = { type: m[1], id: Number(m[2]), title: f.title || "", year: null, posterUrl: null };
   if (f.posterUrl) pub.keptPoster = f.posterUrl;
   if (f.description != null) {
@@ -883,10 +883,13 @@ async function searchTmdb() {
   const ul = $("#tmdb-results");
   ul.replaceChildren(el("li", "muted", "Recherche…"));
   try {
-    const isRef = /themoviedb\.org\/(movie|tv)\/\d+|^(movie|tv)\/\d+$/i.test(q);
+    // Sagas TMDB (collections : intégrales, packs de films) comprises, comme le
+    // formulaire du site : lien /collection/…, « collection/528 », ou la
+    // recherche par titre qui les donne en fin de liste (Mamaiii, 10/11/26).
+    const isRef = /themoviedb\.org\/(movie|tv|collection)\/\d+|^(movie|tv|collection)\/\d+$/i.test(q);
     const r = isRef ? await api("/ui/pub/tmdb/lookup?ref=" + encodeURIComponent(q)) : await api("/ui/pub/tmdb/search?q=" + encodeURIComponent(q));
     ul.replaceChildren();
-    const list = (r.results || []).filter((x) => x.type === "movie" || x.type === "tv").slice(0, 12);
+    const list = (r.results || []).filter((x) => x.type === "movie" || x.type === "tv" || x.type === "collection").slice(0, 12);
     if (!list.length) ul.append(el("li", "muted", "Aucun résultat. Essaie le titre original, ou colle le lien de la fiche TMDB."));
     for (const it of list) {
       const li = el("li");
@@ -902,7 +905,7 @@ async function searchTmdb() {
         b.append(el("span", "noposter", "?"));
       }
       const meta = el("span", "tmdb-meta");
-      meta.append(el("b", null, it.title), el("span", "muted", (it.type === "tv" ? "Série" : "Film") + (it.year ? " · " + it.year : "")));
+      meta.append(el("b", null, it.title), el("span", "muted", tmdbKind(it.type) + (it.year ? " · " + it.year : "")));
       if (it.originalTitle && it.originalTitle !== it.title) meta.append(el("span", "muted small", it.originalTitle));
       b.append(meta);
       b.addEventListener("click", () => pickTmdb(it));
@@ -914,8 +917,13 @@ async function searchTmdb() {
   }
 }
 
+// Nature d'une œuvre TMDB, comme le site : film, série ou saga (collection).
+function tmdbKind(type) {
+  return type === "tv" ? "Série" : type === "collection" ? "Saga" : "Film";
+}
+
 function pickTmdb(it) {
-  pub.tmdb = { type: it.type, id: it.id, title: it.title, year: it.year, posterUrl: it.posterUrl };
+  pub.tmdb ={ type: it.type, id: it.id, title: it.title, year: it.year, posterUrl: it.posterUrl };
   if (it.type === "tv") rememberSeries(seriesTitleOf(pub.fiche), it);
   $("#f-notmdb").checked = false;
   $("#tmdb-results").replaceChildren();
@@ -944,7 +952,7 @@ function renderTmdbPicked() {
   a.href = "https://www.themoviedb.org/" + it.type + "/" + it.id;
   a.target = "_blank";
   a.rel = "noopener";
-  t.append(a, el("div", "muted small", it.type === "tv" ? "Série" + (it.remembered ? " · reprise de ton choix pour une autre saison" : "") : "Film"));
+  t.append(a, el("div", "muted small", tmdbKind(it.type) + (it.type === "tv" && it.remembered ? " · reprise de ton choix pour une autre saison" : "")));
   const ch = el("button", "link", "Changer");
   ch.type = "button";
   ch.addEventListener("click", () => {
@@ -1124,7 +1132,8 @@ async function loadVersions() {
   }
   const leaf = currentCategory();
   const q = new URLSearchParams({ name: $("#f-name").value.trim() || releaseNameOf(j), size: String(j.total || 0) });
-  if (pub.tmdb && !isGame() && !isBook() && !isAlbum()) q.set("tmdb", pub.tmdb.type + "/" + pub.tmdb.id);
+  // Une saga n'a pas de versions par identifiant sur V3X : recherche par titre.
+  if (pub.tmdb && pub.tmdb.type !== "collection" && !isGame() && !isBook() && !isAlbum()) q.set("tmdb", pub.tmdb.type + "/" + pub.tmdb.id);
   if (leaf) q.set("category", leaf.slug);
   else if ($("#f-root").value) q.set("category", $("#f-root").value);
   const key = q.toString();

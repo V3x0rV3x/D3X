@@ -79,6 +79,8 @@ func demoSeedbox(home string) {
 var demoMovies = []map[string]interface{}{
 	{"type": "movie", "id": 900001, "title": "Démonstration", "originalTitle": "Demonstration", "year": 2024, "posterUrl": nil, "overview": "Un film qui n'existe pas, pour essayer D3X.", "genreIds": []int{18}},
 	{"type": "tv", "id": 900002, "title": "Démonstration, la série", "year": 2023, "posterUrl": nil, "overview": "", "genreIds": []int{18}},
+	// Saga TMDB (collection) : en fin de liste, comme le site.
+	{"type": "collection", "id": 900003, "title": "Démonstration - Saga", "year": nil, "posterUrl": nil, "overview": "", "genreIds": []int{}},
 }
 
 func (d *demoPub) handle(w http.ResponseWriter, r *http.Request) bool {
@@ -98,6 +100,8 @@ func (d *demoPub) handle(w http.ResponseWriter, r *http.Request) bool {
 			"languages": []string{"", "Multi (FR inclus)", "Français", "VFQ", "VOSTFR", "VO", "Muet"},
 			"templates": []map[string]string{{"id": "sobre", "name": "Sobre", "body": ""}, {"id": "complet", "name": "Complet", "body": ""}},
 		})
+	case r.URL.Path == "/api/d3x/tmdb/lookup" && strings.Contains(r.URL.Query().Get("ref"), "collection/"):
+		js(map[string]interface{}{"results": demoMovies[2:]})
 	case r.URL.Path == "/api/d3x/tmdb/search", r.URL.Path == "/api/d3x/tmdb/lookup":
 		js(map[string]interface{}{"results": demoMovies})
 	case r.URL.Path == "/api/d3x/igdb/search":
