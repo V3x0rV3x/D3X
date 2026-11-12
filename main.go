@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -68,7 +69,12 @@ func main() {
 		os.Exit(health())
 	}
 	port := flag.Int("port", defaultPort, "port local de la page")
-	noBrowser := flag.Bool("no-browser", false, "ne pas ouvrir de fenêtre")
+	noBrowser := flag.Bool("no-browser", false, "ne pas ouvrir de fenêtre au lancement (sous Windows : démarrer réduit dans la zone de notification)")
+	// -tray : démarrer réduit dans la zone de notification, pour un lancement
+	// par une tâche planifiée (Encrypted_Shards, 12/11/26). Même effet que
+	// -no-browser, que l'entrée « lancer avec Windows » garde : une version
+	// plus ancienne de D3X ne connaît pas -tray.
+	tray := flag.Bool("tray", false, "démarrer réduit dans la zone de notification, sans ouvrir la fenêtre (comme -no-browser)")
 	listen := flag.String("listen", os.Getenv("D3X_LISTEN"), "mode serveur (Docker, NAS) : adresse d'écoute, par exemple 0.0.0.0:8733")
 	showVersion := flag.Bool("version", false, "afficher la version")
 	flag.Parse()
@@ -84,7 +90,7 @@ func main() {
 		}
 		return
 	}
-	if err := run(*port, !*noBrowser); err != nil {
+	if err := run(*port, !*noBrowser && !*tray); err != nil {
 		log.Println("arrêt :", err)
 		desktop.MessageBox("D3X", "D3X n'a pas pu démarrer : "+err.Error())
 		os.Exit(1)
@@ -130,16 +136,34 @@ func run(port int, window bool) error {
 		return fmt.Errorf("configuration illisible : %w", err)
 	}
 
-	// Déjà lancé ? On rouvre simplement sa fenêtre.
+	// Déjà lancé ? Sa fenêtre revient au premier plan, ou s'ouvre s'il n'en a
+	// pas : jamais une seconde fenêtre. Lancé sans fenêtre (-tray), rien.
 	if takeover == "" {
 		if url, ok := runningInstance(); ok {
-			log.Println("D3X tourne déjà, ouverture de sa fenêtre")
-			if window {
+			switch {
+			case !window:
+				log.Println("D3X tourne déjà, lancé sans fenêtre : rien à faire")
+			case desktop.FocusWindow(profileDir()):
+				log.Println("D3X tourne déjà, sa fenêtre revient au premier plan")
+			default:
+				log.Println("D3X tourne déjà, ouverture de sa fenêtre")
 				openWindow(url)
 			}
 			return nil
 		}
 	}
+
+	// Démarrer réduit (Réglages ▸ Zone de notification) : un lancement neuf
+	// n'ouvre pas la fenêtre, comme -tray. Un second lancement, lui, l'ouvre
+	// (plus haut) : c'est le geste pour la voir.
+	if window && takeover == "" && desktop.HasTray && cfg.TrayStart {
+		log.Println("démarrage réduit dans la zone de notification (Réglages)")
+		window = false
+	}
+	// resident : lancé sans fenêtre (avec Windows, -tray, -no-browser, ou
+	// réduit par le réglage), D3X attend dans la zone de notification jusqu'à
+	// « Quitter » : sa fenêtre ouverte puis fermée ne l'arrête pas.
+	resident := desktop.HasTray && (!window || cfg.TrayStart)
 
 	token := server.NewToken()
 	var ln net.Listener
@@ -162,11 +186,10 @@ func run(port int, window bool) error {
 		}
 	} else {
 		// Fenêtre fantôme d'un D3X précédent (rectangle blanc ou gris resté sur
-		// le bureau) : on la ferme avant d'en ouvrir une neuve.
-		if window {
-			if n := desktop.CloseWindow(profileDir()); n > 0 {
-				log.Printf("ancienne fenêtre de D3X fermée (%d processus)", n)
-			}
+		// le bureau) : on la ferme avant d'en ouvrir une neuve (au lancement,
+		// ou depuis l'icône après un lancement réduit).
+		if n := desktop.CloseWindow(profileDir()); n > 0 {
+			log.Printf("ancienne fenêtre de D3X fermée (%d processus)", n)
 		}
 		if ln, err = net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(port)); err != nil {
 			if ln, err = net.Listen("tcp", "127.0.0.1:0"); err != nil {
@@ -203,12 +226,11 @@ func run(port int, window bool) error {
 		})
 	}
 	// Arrêt de D3X (icône « Quitter », fenêtre fermée, signal, serveur tombé) :
-	// sa fenêtre part avec lui. Jamais pendant une mise à jour : la nouvelle
-	// version reprend la même fenêtre.
+	// sa fenêtre part avec lui, même ouverte depuis l'icône après un lancement
+	// réduit. Jamais pendant une mise à jour : la nouvelle version reprend la
+	// même fenêtre.
 	stop := func(code int) {
-		if window {
-			desktop.CloseWindow(profileDir())
-		}
+		desktop.CloseWindow(profileDir())
 		quit(code)
 	}
 
@@ -217,23 +239,50 @@ func run(port int, window bool) error {
 	// travail, il reste dans la zone de notification et s'arrête une fois fini.
 	// (Surveiller le processus du navigateur ne marche pas : Edge passe la
 	// fenêtre à un autre de ses processus et rend la main tout de suite.)
-	// showWindow dit si la page est partie dans la fenêtre d'application (et
-	// non dans le navigateur par défaut).
-	showWindow := func() bool {
-		if desktop.OpenWindow(url, profileDir()) != nil {
-			return true
+	// showWindow rend la fenêtre d'application ouverte, nil si la page est
+	// partie dans le navigateur par défaut.
+	showWindow := func() *desktop.Window {
+		if w := desktop.OpenWindow(url, profileDir()); w != nil {
+			return w
 		}
 		if !desktop.HasTray {
 			fmt.Println("Ouvre ce lien dans ton navigateur :", url)
 		}
 		_ = desktop.OpenDefault(url)
-		return false
+		return nil
+	}
+	// openApp : « Ouvrir D3X » (clic sur l'icône, menu) ne donne jamais deux
+	// fenêtres (Encrypted_Shards, 12/11/26 : quelques double-clics sur l'icône
+	// en ouvraient plusieurs, dont certaines se fermaient seules). La fenêtre
+	// déjà ouverte revient au premier plan ; un clic arrivé pendant une
+	// ouverture, le temps que la fenêtre paraisse (15 s au plus), est ignoré.
+	// Appelé sur le fil de l'icône : le travail part dans une goroutine.
+	var opening atomic.Bool
+	openApp := func() {
+		if !opening.CompareAndSwap(false, true) {
+			return
+		}
+		go func() {
+			defer opening.Store(false)
+			if srv.PageClosed() {
+				// La page a dit au revoir : ce qui reste de la fenêtre est un
+				// fantôme, fermé avant d'en ouvrir une neuve.
+				desktop.CloseWindow(profileDir())
+			} else if desktop.FocusWindow(profileDir()) {
+				return
+			}
+			if w := showWindow(); w != nil {
+				w.WaitIdentity()
+			}
+		}()
 	}
 	// Lancement avec Windows : l'entrée suit l'exécutable s'il a changé de place.
 	if desktop.HasAutostart && desktop.Autostart() {
 		_ = desktop.SetAutostart(true)
 	}
-	if desktop.HasTray && window {
+	// Lancé réduit aussi : la fenêtre peut s'ouvrir depuis l'icône, et un lot
+	// lancé d'elle retient la veille de même.
+	if desktop.HasTray {
 		go func() {
 			cleaned := false
 			// Heure murale, comme PageGone (l'horloge monotone peut ne pas compter
@@ -261,13 +310,14 @@ func run(port int, window bool) error {
 					cleaned = false
 					continue
 				}
-				if !srv.Busy() && !srv.StayInTray() {
+				if !srv.Busy() && !srv.StayInTray() && !resident {
 					log.Println("fenêtre fermée, rien en cours : arrêt (" + srv.GoneWhy() + ")")
 					stop(0)
 				}
 				// D3X reste dans la zone de notification : la fenêtre fermée ne
-				// doit pas laisser de fantôme derrière elle.
-				if !cleaned && srv.PageClosed() {
+				// doit pas laisser de fantôme derrière elle. Pas pendant
+				// l'ouverture d'une fenêtre neuve, qui n'a pas encore parlé.
+				if !cleaned && srv.PageClosed() && !opening.Load() {
 					desktop.CloseWindow(profileDir())
 					cleaned = true
 				}
@@ -309,9 +359,13 @@ func run(port int, window bool) error {
 	}()
 
 	if takeover == "" && window {
+		// Un clic sur l'icône pendant ce premier lancement n'ouvre pas une
+		// seconde fenêtre (openApp).
+		opening.Store(true)
 		go func() {
+			defer opening.Store(false)
 			time.Sleep(300 * time.Millisecond)
-			if !showWindow() || !desktop.HasTray {
+			if showWindow() == nil || !desktop.HasTray {
 				return
 			}
 			// Fenêtre ratée (Luci, 21/10/26 : il fallait lancer D3X deux fois),
@@ -327,7 +381,9 @@ func run(port int, window bool) error {
 				}
 				if waited >= hiddenCheck && srv.PageHidden() {
 					log.Println("fenêtre ouverte mais pas affichée, nouvelle fenêtre")
-					showWindow()
+					if w := showWindow(); w != nil {
+						w.WaitIdentity()
+					}
 					return
 				}
 			}
@@ -336,14 +392,25 @@ func run(port int, window bool) error {
 			}
 			log.Println("fenêtre restée vide, réouverture")
 			desktop.CloseWindow(profileDir())
-			showWindow()
+			if w := showWindow(); w != nil {
+				w.WaitIdentity()
+			}
 		}()
 	} else if !window {
 		fmt.Println("Ouvre ce lien dans ton navigateur :", url)
 	}
 
 	if desktop.HasTray {
-		desktop.Tray(func() {}, func() { showWindow() }, func() {
+		// « Ouvrir dans le navigateur » : la page avec une session valide (le
+		// même lien à jeton que la fenêtre), dans le navigateur habituel.
+		// L'adresse seule (http://localhost:8733/) n'a pas de session.
+		browser := func() {
+			log.Println("ouverture de la page dans le navigateur par défaut")
+			if err := desktop.OpenDefault(url); err != nil {
+				log.Println("navigateur par défaut :", err)
+			}
+		}
+		desktop.Tray(func() {}, openApp, browser, func() {
 			srv.StopLot() // un lot s'arrête après la release en cours
 			if srv.Busy() {
 				desktop.MessageBox("D3X", "D3X termine d'abord ce qu'il a en cours (ajouts, vérifications ou publication), puis s'arrêtera.")

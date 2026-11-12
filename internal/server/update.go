@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/ed25519"
+	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
@@ -122,15 +123,21 @@ func (s *Server) ping(w http.ResponseWriter, r *http.Request) {
 	shown := r.URL.Query().Get("shown") == "1"
 	s.pagesMu.Lock()
 	if s.pages == nil {
-		s.pages = map[string]bool{}
+		s.pages = map[string]*pageSeen{}
 	}
-	before, known := s.pages[id]
-	if len(s.pages) < 64 || known {
-		s.pages[id] = before || shown
+	p, known := s.pages[id]
+	before := known && p.shown
+	if !known && len(s.pages) < 64 {
+		p = &pageSeen{}
+		s.pages[id] = p
+	}
+	if p != nil {
+		p.shown = before || shown
+		p.at = time.Now()
 	}
 	other := false
 	for k, v := range s.pages {
-		if k != id && v {
+		if k != id && v.shown {
 			other = true
 		}
 	}
@@ -151,12 +158,51 @@ func (s *Server) ping(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// pageSeen : une page de D3X (fenêtre, onglet du navigateur) vue par ping.
+type pageSeen struct {
+	shown bool      // à l'écran au moins une fois
+	at    time.Time // dernier signal
+}
+
+// pageAlive : une page qui s'est signalée depuis moins longtemps est encore
+// ouverte. Elle se signale toutes les 20 s, une fois par minute au plus lent
+// quand le navigateur la ralentit (fenêtre réduite, onglet caché).
+const pageAlive = 90 * time.Second
+
+// bye : une page se ferme (fenêtre fermée, onglet fermé, rechargement). Le
+// départ de la page ne compte que si aucune autre n'est encore ouverte :
+// « Ouvrir dans le navigateur » ajoute un onglet à côté de la fenêtre, et
+// fermer l'un ne doit pas arrêter D3X, ni fermer l'autre comme un fantôme.
+func (s *Server) bye(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		ID string `json:"id"`
+	}
+	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&in)
+	other := false
+	if in.ID != "" { // sans identifiant, on ne sait pas quelle page part : elle compte
+		s.pagesMu.Lock()
+		delete(s.pages, in.ID)
+		for _, p := range s.pages {
+			if time.Since(p.at) < pageAlive {
+				other = true
+			}
+		}
+		s.pagesMu.Unlock()
+	}
+	if other {
+		log.Println("une page de D3X s'est fermée, une autre reste ouverte")
+	} else {
+		s.byeAt.Store(time.Now().UnixNano())
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // PageShown : une page au moins est à l'écran.
 func (s *Server) PageShown() bool {
 	s.pagesMu.Lock()
 	defer s.pagesMu.Unlock()
 	for _, v := range s.pages {
-		if v {
+		if v.shown {
 			return true
 		}
 	}
@@ -171,7 +217,7 @@ func (s *Server) PageHidden() bool {
 		return false
 	}
 	for _, v := range s.pages {
-		if v {
+		if v.shown {
 			return false
 		}
 	}

@@ -96,6 +96,10 @@ async function api(path, body) {
     // Mode serveur (Docker, NAS) : pas de fenêtre à relancer, la page s'ouvre
     // avec le lien d'accès écrit dans le journal (sultar, 22/10/26).
     if (data.remote) $("#session").textContent = "Ouvre D3X avec son lien d'accès, qui finit par /auth?t=… : il est écrit dans le journal de D3X à son démarrage. Avec l'image Docker : docker compose logs d3x. Le lien reste le même d'un redémarrage à l'autre.";
+    // Page locale ouverte par son adresse seule (http://localhost:8733/) ou
+    // restée d'un lancement d'avant (Encrypted_Shards, 12/11/26) : le menu
+    // de l'icône l'ouvre avec une session valide.
+    else if (data.tray) $("#session").textContent = "La session a expiré, ou cette page a été ouverte par son adresse seule. Pour ouvrir D3X dans ton navigateur : clic droit sur son icône, près de l'horloge, puis « Ouvrir dans le navigateur ». Un clic sur l'icône ouvre sa fenêtre.";
     $("#session").classList.remove("hidden");
     throw new Error("session");
   }
@@ -458,6 +462,10 @@ function fillSettings() {
   $("#w-auto").checked = !!w.autoAdd;
   $("#w-start").checked = !!w.autostart;
   $("#w-start-row").classList.toggle("hidden", !w.canAutostart);
+  const tr = s.tray || {};
+  $("#tray-set").classList.toggle("hidden", !tr.on);
+  $("#t-stay").checked = !!tr.stay;
+  $("#t-start").checked = !!tr.start;
   $("#w-notify-row").classList.toggle("hidden", !!s.mode);
   watchHint();
   setStatus("#v3x-status", s.v3x.configured, s.v3x.ok, s.v3x.ok ? "Connecté en tant que " + s.v3x.username : s.v3x.error);
@@ -894,6 +902,7 @@ async function saveSettings(ev) {
         autoAdd: $("#w-auto").checked,
         autostart: $("#w-start-row").classList.contains("hidden") ? null : $("#w-start").checked,
       },
+      tray: $("#tray-set").classList.contains("hidden") ? null : { stay: $("#t-stay").checked, start: $("#t-start").checked },
     });
     previewing = false;
     renderState(s);

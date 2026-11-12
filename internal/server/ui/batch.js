@@ -23,6 +23,7 @@ const lot = {
   skipSet: new Set(), // le même, en minuscules
   tagged: false, // étiquettes à ne jamais publier réglées et au moins un client : la colonne « Étiquettes » s'affiche
   tagsWarn: "", // un client n'a pas répondu : ses étiquettes manquent
+  sort: { key: "", dir: 1 }, // tri de la liste : "" (ordre du dossier), name ou size ; dir 1 croissant, -1 décroissant
 };
 
 // États du lot, dans l'ordre des onglets.
@@ -282,7 +283,8 @@ function lotRender() {
     b.addEventListener("click", () => { lot.tab = id; lotRender(); });
     tabs.append(b);
   }
-  const list = lot.entries.filter((e) => e.state === lot.tab && lotVisible(e, show));
+  const list = lotSorted(lot.entries.filter((e) => e.state === lot.tab && lotVisible(e, show)));
+  lotSortHeads();
   const tb = $("#b-tbody");
   tb.replaceChildren();
   for (const e of list) tb.append(lotRow(e));
@@ -304,7 +306,54 @@ function lotRender() {
   const resettable = lotResettable();
   $("#b-reset-line").classList.toggle("hidden", lot.running || resettable.length === 0);
   $("#b-reset").textContent = "Tout remettre en attente (" + resettable.length + ")";
+  const retry = lot.tab === "error" ? lotRetryable() : [];
+  $("#b-retry-line").classList.toggle("hidden", lot.running || retry.length === 0);
+  $("#b-retry").textContent = "Réessayer les erreurs (" + retry.length + ")";
+  $("#b-retry").disabled = Date.now() < lot.calmUntil;
+  $("#b-retry-how").textContent = ($("#b-sim").checked ? "En simulation (option cochée plus haut) : " : "Pour de vrai, avec les options plus haut : ") + "D3X les reprend du début (doublon cherché sur V3X, hachage, fiche). Une release publiée entre-temps n'est jamais republiée.";
   lotBar();
+}
+
+// Tri de la liste (Turias, 12/11/26) : un clic sur l'en-tête « Taille » ou
+// « Release » trie l'onglet affiché, un second inverse le sens, un troisième
+// rend l'ordre du dossier. L'affichage seulement : le lot prend toujours les
+// releases dans l'ordre du dossier.
+function lotSorted(list) {
+  const { key, dir } = lot.sort;
+  if (!key) return list;
+  const cmp = key === "size"
+    ? (a, b) => (a.size || 0) - (b.size || 0)
+    : (a, b) => (a.name || "").localeCompare(b.name || "", "fr", { numeric: true, sensitivity: "base" });
+  return list.map((e, i) => [e, i]).sort((x, y) => dir * cmp(x[0], y[0]) || x[1] - y[1]).map((x) => x[0]);
+}
+
+function lotSortBy(key) {
+  const s = lot.sort;
+  if (s.key !== key) lot.sort = { key, dir: 1 };
+  else if (s.dir === 1) lot.sort = { key, dir: -1 };
+  else lot.sort = { key: "", dir: 1 };
+  lotRender();
+}
+
+// lotSortHeads : la flèche du sens sur l'en-tête trié, et aria-sort.
+function lotSortHeads() {
+  for (const [key, id] of [["name", "#b-th-name"], ["size", "#b-th-size"]]) {
+    const th = $(id);
+    const on = lot.sort.key === key;
+    th.setAttribute("aria-sort", on ? (lot.sort.dir === 1 ? "ascending" : "descending") : "none");
+    th.querySelector(".arrow").textContent = on ? (lot.sort.dir === 1 ? " ▲" : " ▼") : "";
+  }
+}
+
+// lotRetryOK : une release en erreur que « Réessayer » reprend. Pas une
+// release illisible (son erreur vient de la lecture du dossier : « Lister »
+// la relit), ni une écartée par une étiquette ou sans nom de release.
+function lotRetryOK(e) {
+  return e.state === "error" && !e.error && !lotOff(e);
+}
+
+function lotRetryable() {
+  return lot.entries.filter(lotRetryOK);
 }
 
 // Onglet ouvert (À revoir, Simulé, Ignoré, Erreur) : ses releases repartent
@@ -416,6 +465,14 @@ function lotRow(e) {
     r.addEventListener("click", () => { setView("publish"); choose(e.path, lot.source, { fromLot: true }); });
     box.append(r);
   }
+  if (lotRetryOK(e)) {
+    const rt = el("button", "btn small", "Réessayer");
+    rt.type = "button";
+    rt.title = "La relancer seule dans un lot, avec les options plus haut";
+    rt.disabled = lot.running;
+    rt.addEventListener("click", (ev) => lotRetry(ev, e));
+    box.append(rt);
+  }
   if (e.state !== "published" && e.state !== "duplicate") {
     const ig = el("button", "btn small", e.state === "ignored" ? "Ne plus ignorer" : "Ignorer");
     ig.type = "button";
@@ -454,7 +511,7 @@ function lotBar() {
 // (bertho-zero, ticket n°3, 27/10/26).
 function lotCalm() {
   lot.calmUntil = Date.now() + 3000;
-  setTimeout(lotBar, 3100);
+  setTimeout(lotRender, 3100);
 }
 
 function lotProgress(label, detail) {
@@ -525,18 +582,42 @@ function lotOptions() {
 // pour ce lancement de D3X : un lot interrompu ne repart pas seul, même après
 // un redémarrage du conteneur (bertho-zero, ticket n°3, 27/10/26).
 async function lotRun(ev) {
-  if (lot.running || !ev || !ev.isTrusted || Date.now() < lot.calmUntil) return;
+  if (!lotClicked(ev)) return;
   await lot.saving; // une remise en attente pas encore écrite au journal
   if (!pub.ctx) await loadCtx();
   if (!pub.ctx) return toast("Publication impossible : " + (pub.ctxError || "V3X injoignable"), "bad");
   // Seulement ce qui est coché ET affiché à l'écran : un dossier apparu entre-temps
   // n'est jamais publié sans avoir été vu.
-  const todo = lot.entries.filter(lotTakes);
+  await lotSend(lot.entries.filter(lotTakes), false);
+}
+
+// lotClicked : un vrai clic, hors d'un lot et des 3 s qui suivent sa fin.
+function lotClicked(ev) {
+  return !lot.running && !!ev && ev.isTrusted && Date.now() >= lot.calmUntil;
+}
+
+// « Réessayer » (AsTaGoR, 12/11/26) : une coupure du réseau laissait des
+// releases dans l'onglet Erreur (« V3X injoignable », « HTTP 502 »…), qu'il
+// fallait rajouter à la main. Elles repartent dans un lot à elles seules (les
+// cases cochées ailleurs n'y entrent pas), avec les options plus haut : D3X
+// les reprend du début, et relit le journal au départ, si bien qu'une release
+// publiée entre-temps ne l'est jamais deux fois. one : une seule release
+// (bouton de sa ligne), sinon toutes celles de l'onglet.
+async function lotRetry(ev, one) {
+  if (!lotClicked(ev)) return;
+  await lot.saving;
+  if (!pub.ctx) await loadCtx();
+  if (!pub.ctx) return toast("Publication impossible : " + (pub.ctxError || "V3X injoignable"), "bad");
+  await lotSend(one ? [one].filter(lotRetryOK) : lotRetryable(), true);
+}
+
+// lotSend envoie le lot à D3X. retry : « Réessayer » (les erreurs repartent).
+async function lotSend(todo, retry) {
   if (!todo.length) return;
   try {
     // D3X refuse une demande faite pour un lancement d'avant le sien.
     const st = await api("/ui/state");
-    const run = await api("/ui/batch/start", { path: lot.dir, source: lot.source, paths: todo.map((e) => e.path), options: lotOptions(), boot: st.boot });
+    const run = await api("/ui/batch/start", { path: lot.dir, source: lot.source, paths: todo.map((e) => e.path), options: lotOptions(), boot: st.boot, retry });
     // Un suivi parti avant le départ rapporterait le lot d'avant (fini) : sa
     // réponse est ignorée.
     lot.gen++;
@@ -775,7 +856,7 @@ function bindBatch() {
     for (const e of lot.entries) e.checked = false;
     lotRender();
   });
-  $("#b-sim").addEventListener("change", lotBar);
+  $("#b-sim").addEventListener("change", lotRender); // la barre et la ligne « Réessayer » disent le mode
   $("#b-waitcheck").checked = waitCheckSaved();
   $("#b-waitcheck").addEventListener("change", (ev) => {
     try { localStorage.setItem("d3x-lot-waitcheck", ev.target.checked ? "1" : "0"); } catch (err) { /* rien */ }
@@ -790,7 +871,9 @@ function bindBatch() {
     lotRender();
   });
   $("#b-reset").addEventListener("click", lotReset);
+  $("#b-retry").addEventListener("click", (ev) => lotRetry(ev));
   $("#b-all").addEventListener("change", (ev) => lotCheckTab(ev.target.checked));
+  for (const b of document.querySelectorAll("#b-wrap .th-sort")) b.addEventListener("click", () => lotSortBy(b.dataset.sort));
 }
 
 bindBatch();

@@ -86,6 +86,13 @@ type Config struct {
 	// Surveillance : nouvelle analyse régulière du client, notifications.
 	Watch Watch `json:"watch"`
 
+	// Zone de notification (Windows, Encrypted_Shards, 12/11/26). TrayStay :
+	// fenêtre fermée et rien en cours, D3X reste lancé (jusqu'à « Quitter »),
+	// surveillance ou pas. TrayStart : un lancement n'ouvre pas la fenêtre,
+	// D3X démarre réduit dans la zone de notification (comme -tray).
+	TrayStay  bool `json:"trayStay,omitempty"`
+	TrayStart bool `json:"trayStart,omitempty"`
+
 	// Liens physiques : quand renommer dans le client est impossible, la
 	// release V3X est rangée dans Links.Dir (vu par le client), ses fichiers
 	// étant des liens vers ceux de ta copie.

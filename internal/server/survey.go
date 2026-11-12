@@ -81,12 +81,13 @@ func (s *Server) surveyReset() {
 	s.sv.last = surveyLast{}
 }
 
-// StayInTray : fenêtre fermée, D3X reste dans la zone de notification pour
-// surveiller le client.
+// StayInTray : fenêtre fermée, D3X reste dans la zone de notification, pour
+// surveiller le client ou parce que le membre l'a choisi (Réglages ▸ Zone de
+// notification).
 func (s *Server) StayInTray() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.cfg.Watch.On
+	return s.cfg.Watch.On || s.cfg.TrayStay
 }
 
 // surveyLoop : un tour par minute, une analyse quand l'intervalle est passé.

@@ -79,7 +79,7 @@ type Server struct {
 	lastSeen        atomic.Int64
 	byeAt           atomic.Int64
 	pagesMu         sync.Mutex
-	pages           map[string]bool // page → affichée à l'écran (ping ?id=&shown=)
+	pages           map[string]*pageSeen // page (ping ?id=&shown=) → affichée à l'écran, dernier signal
 
 	lot    *batch.Engine      // le lot (publication par lot), dans D3X lui-même
 	boot   string             // tiré à chaque lancement : un lot ne part que sur une demande de ce lancement
@@ -192,10 +192,7 @@ func NewWith(version string, cfg *config.Config, token string, port int, opts Op
 	s.mux.HandleFunc("POST /ui/update/restart", s.restartNow)
 	s.mux.HandleFunc("POST /ui/update/check", s.checkNow)
 	s.mux.HandleFunc("GET /ui/ping", s.ping)
-	s.mux.HandleFunc("POST /ui/bye", func(w http.ResponseWriter, r *http.Request) {
-		s.byeAt.Store(time.Now().UnixNano())
-		w.WriteHeader(http.StatusNoContent)
-	})
+	s.mux.HandleFunc("POST /ui/bye", s.bye)
 	go s.connect()
 	go s.v3xRetryLoop()
 	go s.clientRetryLoop()
@@ -205,6 +202,10 @@ func NewWith(version string, cfg *config.Config, token string, port int, opts Op
 	s.engine.SetLinker(s.linkFiles)
 	return s
 }
+
+// hasTray : D3X a une icône dans la zone de notification (Windows, page
+// locale), avec son menu « Ouvrir dans le navigateur ».
+func (s *Server) hasTray() bool { return desktop.HasTray && !s.opts.Remote }
 
 func (s *Server) hostAllowed(host string) bool {
 	if s.opts.Remote {
@@ -236,7 +237,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if !s.sessionOK(r) {
 			// remote : mode serveur (Docker, NAS), la page dit où trouver le
 			// lien d'accès au lieu de « relance D3X » (sultar, 22/10/26).
-			writeJSON(w, http.StatusUnauthorized, map[string]interface{}{"error": "session", "remote": s.opts.Remote})
+			// tray : la page locale peut se rouvrir par le menu de l'icône
+			// (« Ouvrir dans le navigateur »), avec une session valide.
+			writeJSON(w, http.StatusUnauthorized, map[string]interface{}{"error": "session", "remote": s.opts.Remote, "tray": s.hasTray()})
 			return
 		}
 		// Première venue de la page : notée dans le journal, pour distinguer une
@@ -268,6 +271,8 @@ func (s *Server) auth(w http.ResponseWriter, r *http.Request) {
 	if subtle.ConstantTimeCompare([]byte(r.URL.Query().Get("t")), []byte(s.Token)) != 1 {
 		if s.opts.Remote {
 			http.Error(w, "Lien invalide : le bon lien est dans le journal de D3X (docker logs d3x).", http.StatusForbidden)
+		} else if s.hasTray() {
+			http.Error(w, "Lien périmé. Pour ouvrir D3X dans ton navigateur : clic droit sur son icône, près de l'horloge, puis « Ouvrir dans le navigateur ». Ou relance D3X.", http.StatusForbidden)
 		} else {
 			http.Error(w, "Lien périmé : relance D3X pour l'ouvrir.", http.StatusForbidden)
 		}
@@ -400,7 +405,14 @@ type stateOut struct {
 	CheckUpdates bool        `json:"checkUpdates"`
 	LastDir      string      `json:"lastDir,omitempty"`
 	Watch        surveyOut   `json:"watch"`
-	Links        struct {
+	// Tray : la zone de notification (Windows, page locale) ; Stay et Start,
+	// les réglages « rester » et « démarrer réduit ».
+	Tray struct {
+		On    bool `json:"on"`
+		Stay  bool `json:"stay"`
+		Start bool `json:"start"`
+	} `json:"tray"`
+	Links struct {
 		On       bool `json:"on"`
 		Symbolic bool `json:"symbolic"`
 		Publish  bool `json:"publish"`
@@ -453,6 +465,8 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	o.Discogs = s.cfg.DiscogsToken != ""
 	o.LastDir = s.cfg.LastDir
 	o.Watch = s.surveyState(s.cfg.Watch)
+	o.Tray.On = s.hasTray()
+	o.Tray.Stay, o.Tray.Start = s.cfg.TrayStay, s.cfg.TrayStart
 	o.Links.On, o.Links.Symbolic, o.Links.Publish = s.cfg.Links.On, s.cfg.Links.Symbolic, s.cfg.Links.Publish
 	if s.opts.Remote {
 		o.Mode = "server"
@@ -521,6 +535,11 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			AutoAdd   bool  `json:"autoAdd"`
 			Autostart *bool `json:"autostart"`
 		} `json:"watch"`
+		// Tray : absent = inchangé (zone de notification, Windows).
+		Tray *struct {
+			Stay  bool `json:"stay"`
+			Start bool `json:"start"`
+		} `json:"tray"`
 		// Links : absent = inchangé ; le dossier des liens est celui de
 		// chaque client.
 		Links *struct {
@@ -586,6 +605,9 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		c.Links.On, c.Links.Symbolic, c.Links.Publish = in.Links.On, in.Links.Symbolic, in.Links.Publish
+	}
+	if in.Tray != nil {
+		c.TrayStay, c.TrayStart = in.Tray.Stay, in.Tray.Start
 	}
 	restartWatch := false
 	if in.Watch != nil {

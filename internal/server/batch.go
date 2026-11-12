@@ -204,7 +204,11 @@ func (s *Server) batchStart(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	log.Println("lot démarré :", run.Total, "releases")
+	if run.Retry {
+		log.Println("lot démarré pour réessayer des erreurs :", run.Total, "releases")
+	} else {
+		log.Println("lot démarré :", run.Total, "releases")
+	}
 	writeJSON(w, http.StatusOK, s.lotState(run))
 }
 

@@ -407,14 +407,15 @@
     </div>
 
     <div class="tabs hidden" id="b-tabs" role="tablist"></div>
+    <p class="hint hidden" id="b-retry-line"><button type="button" class="btn small primary" id="b-retry"></button> <span id="b-retry-how"></span></p>
     <p class="hint hidden" id="b-reset-line"><button type="button" class="btn small" id="b-reset"></button> Les décisions du lot sont oubliées pour ces releases : rien n'est publié ni effacé.</p>
     <div class="table-wrap hidden" id="b-wrap">
       <table class="rows">
         <thead>
           <tr>
             <th class="c-check"><input type="checkbox" id="b-all" aria-label="Tout cocher"></th>
-            <th>Release</th>
-            <th class="num">Taille</th>
+            <th id="b-th-name" aria-sort="none"><button type="button" class="th-sort" data-sort="name" title="Trier par nom (un second clic inverse le sens, un troisième rend l'ordre du dossier)">Release<span class="arrow" aria-hidden="true"></span></button></th>
+            <th class="num" id="b-th-size" aria-sort="none"><button type="button" class="th-sort" data-sort="size" title="Trier par taille (un second clic inverse le sens, un troisième rend l'ordre du dossier)">Taille<span class="arrow" aria-hidden="true"></span></button></th>
             <th class="hidden" id="b-th-tags">Étiquettes</th>
             <th>État</th>
             <th></th>
@@ -571,7 +572,13 @@
       <p class="hint" id="w-hint"></p>
       <label class="check" id="w-notify-row"><input id="w-notify" type="checkbox"> Me prévenir : nouvelles releases à cross-seeder, hit and run en vue</label>
       <label class="check"><input id="w-auto" type="checkbox"> Ajouter seul les nouvelles releases identiques (mêmes fichiers, mêmes noms ; jamais les « noms différents »)</label>
+    </fieldset>
+    <fieldset id="tray-set" class="hidden">
+      <legend>Zone de notification</legend>
+      <label class="check"><input id="t-stay" type="checkbox"> Garder D3X lancé quand sa fenêtre est fermée, même sans surveillance ni travail en cours</label>
+      <label class="check"><input id="t-start" type="checkbox"> Démarrer réduit dans la zone de notification, sans ouvrir la fenêtre</label>
       <label class="check" id="w-start-row"><input id="w-start" type="checkbox"> Lancer D3X avec Windows, dans la zone de notification</label>
+      <p class="hint">L'icône de D3X est près de l'horloge : un clic ouvre sa fenêtre (ou la remet devant les autres), clic droit ▸ « Ouvrir dans le navigateur » ouvre la page dans ton navigateur habituel, et « Quitter » arrête D3X. Lancé réduit, D3X attend là jusqu'à « Quitter ». Pour un lancement par une tâche planifiée, ajoute <code>-tray</code> à la commande de D3X.</p>
     </fieldset>
     <fieldset>
       <legend>Apparence</legend>

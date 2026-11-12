@@ -120,8 +120,9 @@ type Run struct {
 	State          string    `json:"state"`
 	Stopped        bool      `json:"stopped"`
 	Current        string    `json:"current,omitempty"`
-	Label          string    `json:"label"`  // « Lot : 3 / 12 »
-	Detail         string    `json:"detail"` // « hachage 42 % », « ton client vérifie X »
+	Label          string    `json:"label"`           // « Lot : 3 / 12 »
+	Detail         string    `json:"detail"`          // « hachage 42 % », « ton client vérifie X »
+	Retry          bool      `json:"retry,omitempty"` // lot lancé par « Réessayer » (onglet Erreur)
 	Done           int       `json:"done"`
 	Total          int       `json:"total"`
 	Published      int       `json:"published"`
@@ -136,6 +137,11 @@ type Spec struct {
 	Source  string   `json:"source"`
 	Paths   []string `json:"paths"`
 	Options Options  `json:"options"`
+	// Retry : « Réessayer » dans l'onglet Erreur. Les releases envoyées que le
+	// journal dit en erreur repartent du début (doublon cherché sur V3X,
+	// hachage, fiche), une fiche gardée repassant « Prête ». Les autres
+	// gardent leur état : une release publiée depuis n'est jamais reprise.
+	Retry bool `json:"retry,omitempty"`
 }
 
 // Fiche : la fiche proposée par V3X (les champs que le lot lit).

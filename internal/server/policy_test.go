@@ -55,6 +55,43 @@ func TestFindPolicy(t *testing.T) {
 	}
 }
 
+// CoprinusComatus, 12/11/26 : l'album « Skunk Anansie - Post Orgasmic Chill
+// (1999) » était bloqué en « Réupload sur accord · CHiLL », son dernier mot
+// pris pour le tag de la team. Sans tiret devant, seul un tag écrit comme la
+// team l'écrit compte ; après un tiret, la casse ne compte pas (comme le site).
+func TestPolicyOrdinaryWord(t *testing.T) {
+	idx := indexPolicies([]v3x.TeamPolicy{
+		{Name: "CHiLL", Tags: []string{"CHiLL"}, Policy: "ask"},
+		{Name: "mHDgz", Tags: []string{"mHDgz"}, Policy: "forbidden"},
+	})
+	for _, n := range []string{
+		"Skunk Anansie - Post Orgasmic Chill (1999)",
+		"Skunk Anansie - Post Orgasmic Chill",
+		"Skunk.Anansie.Post.Orgasmic.Chill",
+		"Auteur - Un Livre Pour Se Chill.epub",
+		"Film 2020 1080p x264 chill.mkv",
+		"Film (1992) - 1080p FR EN x264 ac3 MHDGZ.mkv",
+	} {
+		if h, ok := idx.of(n); ok {
+			t.Errorf("%q : règle %+v, attendu aucune", n, h)
+		}
+	}
+	if h, ok := findPolicy(idx, []string{"Skunk Anansie - Post Orgasmic Chill (1999)"}, 120<<20, 12, nil); ok {
+		t.Errorf("album : %q, attendu aucune règle", h.label())
+	}
+	for _, c := range []struct{ name, team string }{
+		{"Film.2020.1080p.WEB.x264-CHiLL", "CHiLL"},
+		{"Film.2020.1080p.WEB.x264-chill.mkv", "CHiLL"},
+		{"Film (2020) - 1080p x264 CHiLL.mkv", "CHiLL"},
+		{"Film.2020.1080p.WEB.x264.CHiLL", "CHiLL"},
+		{"Le Temps D'un Week-end (1992) - 1080p FR EN x264 ac3 mHDgz.mkv", "mHDgz"},
+	} {
+		if h, ok := idx.of(c.name); !ok || h.Team != c.team {
+			t.Errorf("%q : %+v (%v), attendu %s", c.name, h, ok, c.team)
+		}
+	}
+}
+
 func TestPolicyTexts(t *testing.T) {
 	for _, c := range []struct {
 		h     policyHit

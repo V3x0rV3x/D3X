@@ -8,11 +8,11 @@ import (
 )
 
 func TestBannedTagOf(t *testing.T) {
-	list := []v3x.TeamPolicy{
+	idx := indexPolicies([]v3x.TeamPolicy{
 		{Name: "Dread-Team", Policy: "banned"},
 		{Name: "EXTREME", Policy: "banned"},
 		{Name: "TOXIC", Policy: "banned"},
-	}
+	})
 	for _, tc := range []struct {
 		name, want string
 	}{
@@ -25,8 +25,8 @@ func TestBannedTagOf(t *testing.T) {
 		{"Film - TOXIC (Titre original)", "TOXIC"},
 	} {
 		got := ""
-		if b := bannedTagOf(tc.name, list); b != nil {
-			got = b.Name
+		if h, ok := idx.of(tc.name); ok && h.Policy == "banned" {
+			got = h.Team
 		}
 		if got != tc.want {
 			t.Errorf("%s : %q, attendu %q", tc.name, got, tc.want)
@@ -35,7 +35,7 @@ func TestBannedTagOf(t *testing.T) {
 }
 
 func TestDetagHits(t *testing.T) {
-	byTag := map[string]policyHit{"mhdgz": {Team: "mHDgz", Policy: "forbidden"}}
+	idx := indexPolicies([]v3x.TeamPolicy{{Name: "mHDgz", Tags: []string{"mHDgz"}, Policy: "forbidden"}})
 	const size = 4 << 30
 	rows := []crossseed.Row{
 		// Ekhstaz, 27/10/26 : la copie taguée (tag séparé par un espace) est chez lui.
@@ -52,11 +52,11 @@ func TestDetagHits(t *testing.T) {
 		if r.Status != crossseed.StNone {
 			continue
 		}
-		if h, ok := policyOf(r.Name, nil, byTag); ok {
+		if h, ok := idx.of(r.Name); ok {
 			hits[r.Key] = h
 		}
 	}
-	detagHits(rows, hits, nil, byTag)
+	detagHits(rows, hits, idx)
 	if h, ok := hits["b"]; !ok || h.Team != "mHDgz" || h.Policy != "forbidden" || h.Detag != rows[0].Name {
 		t.Errorf("detag : %+v", hits["b"])
 	}
@@ -65,7 +65,7 @@ func TestDetagHits(t *testing.T) {
 			t.Errorf("%s ne devrait pas être visée : %+v", k, h)
 		}
 	}
-	if h, ok := policyOf(rows[0].Name, nil, byTag); !ok || h.Team != "mHDgz" {
+	if h, ok := idx.of(rows[0].Name); !ok || h.Team != "mHDgz" {
 		t.Errorf("tag séparé par un espace non reconnu : %+v", h)
 	}
 }

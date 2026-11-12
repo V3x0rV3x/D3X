@@ -13,14 +13,16 @@ import (
 // HasTray : l'icône de la zone de notification existe sous Windows.
 const HasTray = true
 
-// Tray affiche l'icône de D3X (menu « Ouvrir D3X », « Quitter » ; clic sur
-// l'icône = ouvrir) et bloque jusqu'à Quit. ready est appelé une fois l'icône
-// posée.
-func Tray(ready, onOpen, onQuit func()) {
+// Tray affiche l'icône de D3X (menu « Ouvrir D3X », « Ouvrir dans le
+// navigateur », « Quitter » ; clic sur l'icône = ouvrir) et bloque jusqu'à
+// Quit. ready est appelé une fois l'icône posée. onOpen est appelé sur le fil
+// de l'icône, à chaque clic : il rend la main tout de suite.
+func Tray(ready, onOpen, onBrowser, onQuit func()) {
 	systray.Run(func() {
 		systray.SetIcon(Icon)
 		systray.SetTooltip("D3X")
 		open := systray.AddMenuItem("Ouvrir D3X", "Ouvrir la fenêtre de D3X")
+		browser := systray.AddMenuItem("Ouvrir dans le navigateur", "Ouvrir la page de D3X dans ton navigateur habituel, avec une session valide")
 		systray.AddSeparator()
 		quit := systray.AddMenuItem("Quitter", "Arrêter D3X")
 		systray.SetOnTapped(onOpen)
@@ -29,6 +31,8 @@ func Tray(ready, onOpen, onQuit func()) {
 				select {
 				case <-open.ClickedCh:
 					onOpen()
+				case <-browser.ClickedCh:
+					onBrowser()
 				case <-quit.ClickedCh:
 					onQuit()
 					return

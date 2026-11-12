@@ -788,3 +788,92 @@ func TestProcessSiteFailure(t *testing.T) {
 		})
 	}
 }
+
+// Réessayer (AsTaGoR, 12/11/26) : une coupure du réseau laissait des releases
+// en erreur (« V3X injoignable », « HTTP 502 »), qu'il fallait rajouter à la
+// main. Un lot lancé pour les réessayer les reprend du début ; sans lui, une
+// erreur n'est jamais reprise. Le journal relu au départ fait foi : une
+// release publiée depuis ne l'est pas deux fois, une release déjà sur V3X
+// passe « Déjà présent », une fiche gardée sert, et une release illisible
+// reste en erreur.
+func TestProcessRetryErrors(t *testing.T) {
+	cut := releases.Entry{Name: "Coupure", Path: "/r/Coupure", Video: true, Size: 5 << 30}
+	late := releases.Entry{Name: "Publiee.Depuis", Path: "/r/Publiee.Depuis", Video: true, Size: 5 << 30}
+	kept := releases.Entry{Name: "Fiche.Gardee", Path: "/r/Fiche.Gardee", Video: true, Size: 5 << 30}
+	there := releases.Entry{Name: "Deja.Sur.V3X", Path: "/r/Deja.Sur.V3X", Video: true, Size: 5 << 30}
+	unread := releases.Entry{Name: "Illisible", Path: "/r/Illisible", Video: true, Size: 5 << 30, Error: "dossier illisible"}
+	all := []string{cut.Path, late.Path, kept.Path, there.Path, unread.Path}
+
+	d, p := happy(cut, late, kept, there, unread)
+	d.last = map[string]journal.Event{
+		cut.Path:   {Kind: "batch_error", Detail: "V3X injoignable : net/http: TLS handshake timeout"},
+		late.Path:  {Kind: "published", Detail: "publiée", ID: "fiche-publiee"},
+		kept.Path:  {Kind: "batch_error", Detail: "error code: 502 (HTTP 502)"},
+		there.Path: {Kind: "batch_error", Detail: "context deadline exceeded"},
+	}
+	d.prepared = func(key string) (*Prepared, bool) {
+		if key != kept.Path {
+			return nil, false
+		}
+		return &Prepared{Name: "Fiche", Summary: "Films ▸ Film · Fiche (2020)", Fields: map[string]string{"releaseName": "Fiche.Gardee.2020.1080p.WEB.x264-GRP", "categoryId": "11"}}, true
+	}
+	p.make = func(path string) *publish.Job {
+		j := videoJob(path)
+		if path == there.Path { // le premier envoi était passé malgré l'erreur
+			j.Duplicate = &v3x.Match{Kind: "exact", ID: "fiche-deja", Name: there.Name}
+		}
+		return j
+	}
+
+	// Sans « Réessayer », une erreur reste une erreur.
+	e := quick(d)
+	r, err := e.Start(Spec{Dir: "/r", Source: "local", Paths: all})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Total != 0 || r.Retry {
+		t.Fatalf("lot ordinaire : total %d, retry %v", r.Total, r.Retry)
+	}
+	waitDone(t, e)
+	if p.starts != 0 {
+		t.Fatalf("%d publications démarrées par un lot ordinaire", p.starts)
+	}
+
+	e = quick(d)
+	r, err = e.Start(Spec{Dir: "/r", Source: "local", Paths: all, Retry: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Total != 3 || !r.Retry {
+		t.Fatalf("réessai : total %d (attendu 3), retry %v", r.Total, r.Retry)
+	}
+	if en := entryByPath(r, kept.Path); en.State != "ready" || en.Detail != "" {
+		t.Errorf("fiche gardée au départ : %+v", en)
+	}
+	r = waitDone(t, e)
+	if en := entryByPath(r, cut.Path); en.State != "published" {
+		t.Errorf("coupure réseau : %+v", en)
+	}
+	if en := entryByPath(r, late.Path); en.State != "published" || en.Detail != "publiée" {
+		t.Errorf("publiée depuis : %+v", en)
+	}
+	if en := entryByPath(r, kept.Path); en.State != "published" || p.fields["job-"+kept.Path]["releaseName"] != "Fiche.Gardee.2020.1080p.WEB.x264-GRP" {
+		t.Errorf("fiche gardée : %+v, champs %v", en, p.fields["job-"+kept.Path])
+	}
+	if en := entryByPath(r, there.Path); en.State != "duplicate" || !strings.Contains(en.Detail, "déjà sur V3X") {
+		t.Errorf("déjà sur V3X : %+v", en)
+	}
+	if en := entryByPath(r, unread.Path); en.State != "error" || en.Detail != "dossier illisible" {
+		t.Errorf("illisible : %+v", en)
+	}
+	if p.starts != 3 || len(p.fields) != 2 {
+		t.Errorf("%d publications démarrées (attendu 3), %d envoyées (attendu 2)", p.starts, len(p.fields))
+	}
+	if _, sent := p.fields["job-"+late.Path]; sent {
+		t.Error("une release publiée depuis a été republiée")
+	}
+	k := d.kinds()
+	if k[there.Path] != "batch_duplicate" || k[late.Path] != "" || k[unread.Path] != "" {
+		t.Errorf("journal : %v", k)
+	}
+}

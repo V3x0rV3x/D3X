@@ -139,7 +139,7 @@ func (e *Engine) Start(spec Spec) (*Run, error) {
 			return nil, err
 		}
 	}
-	r := &Run{Dir: spec.Dir, Source: spec.Source, Options: spec.Options, State: StRunning, StartedAt: time.Now()}
+	r := &Run{Dir: spec.Dir, Source: spec.Source, Options: spec.Options, State: StRunning, Retry: spec.Retry, StartedAt: time.Now()}
 	for _, x := range list {
 		en := &Entry{Entry: x, State: "pending", Tags: tags[x.Path]}
 		if ev, ok := last[src.Key(x.Path)]; ok {
@@ -147,6 +147,20 @@ func (e *Engine) Start(spec Spec) (*Run, error) {
 			en.Last = &ev
 			if st := stateOfKind[ev.Kind]; st != "" {
 				en.State, en.Detail = st, ev.Detail
+			}
+		}
+		// Réessayer (AsTaGoR, 12/11/26 : des releases en erreur après une
+		// coupure du réseau, « V3X injoignable », « HTTP 502 », qu'il fallait
+		// rajouter à la main) : une release que le journal dit en erreur
+		// repart du début. Le journal relu ici fait foi : publiée depuis (par
+		// Publier, ou une publication qui a fini par aboutir), elle ne l'est
+		// jamais deux fois ; et une release déjà sur V3X sans que D3X le sache
+		// est vue par la recherche de doublon avant tout hachage, ou refusée
+		// par le site (« Déjà présent »). Sa fiche gardée, s'il y en a une, sert.
+		if spec.Retry && en.State == "error" && x.Error == "" {
+			en.State, en.Detail = "pending", ""
+			if _, ok := e.deps.Prepared(src.Key(x.Path)); ok {
+				en.State = "ready"
 			}
 		}
 		if x.Error != "" {

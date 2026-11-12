@@ -323,27 +323,6 @@ type policyHit struct {
 // la même release (même seuil que les doublons de taille de V3X).
 const detagMinSize = 100 << 20
 
-// policyOf : la règle de V3X qui vise ce nom (groupe refusé, puis team qui
-// interdit le réupload ou le soumet à son accord), d'après son tag de fin.
-func policyOf(name string, banned []v3x.TeamPolicy, byTag map[string]policyHit) (policyHit, bool) {
-	if b := bannedTagOf(name, banned); b != nil {
-		return policyHit{Team: b.Name, Policy: "banned", Reason: b.Reason}, true
-	}
-	if g := releaseGroup(name); g != "" {
-		if h, ok := byTag[strings.ToLower(g)]; ok {
-			return h, true
-		}
-	}
-	// Tag séparé par un espace ou un point (« … x264 ac3 mHDgz.mkv ») :
-	// seulement s'il est celui d'une team qui a une règle.
-	if t := lastToken(name); t != "" {
-		if h, ok := byTag[strings.ToLower(t)]; ok {
-			return h, true
-		}
-	}
-	return policyHit{}, false
-}
-
 // lastToken : le dernier mot du nom, sans extension ni titre entre
 // parenthèses en fin de nom.
 func lastToken(name string) string {
@@ -362,7 +341,7 @@ func lastToken(name string) string {
 // et même nombre de fichiers qu'une copie qui en a une (taguée, dans
 // n'importe quel onglet) : un detag ou un renommage de cette release garde
 // sa règle. Les clés des lignes déjà réglées (hits) ne bougent pas.
-func detagHits(rows []crossseed.Row, hits map[string]policyHit, banned []v3x.TeamPolicy, byTag map[string]policyHit) {
+func detagHits(rows []crossseed.Row, hits map[string]policyHit, idx policyIndex) {
 	type tagged struct {
 		hit  policyHit
 		name string
@@ -380,7 +359,7 @@ func detagHits(rows []crossseed.Row, hits map[string]policyHit, banned []v3x.Tea
 		if _, seen := src[k]; seen {
 			continue
 		}
-		if h, ok := policyOf(row.Name, banned, byTag); ok {
+		if h, ok := idx.of(row.Name); ok {
 			src[k] = tagged{h, row.Name}
 		}
 	}
@@ -416,7 +395,6 @@ func (s *Server) teamPoliciesMatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	idx := indexPolicies(list)
-	banned, byTag := idx.banned, idx.byTag
 	out := map[string]policyHit{}
 	rows := s.engine.Rows()
 	for _, row := range rows {
@@ -425,11 +403,11 @@ func (s *Server) teamPoliciesMatch(w http.ResponseWriter, r *http.Request) {
 		}
 		// Groupe refusé sur V3X (liste du staff, 22/10/26) avant tout le reste,
 		// puis la team du tag.
-		if h, ok := policyOf(row.Name, banned, byTag); ok {
+		if h, ok := idx.of(row.Name); ok {
 			out[row.Key] = h
 		}
 	}
-	detagHits(rows, out, banned, byTag)
+	detagHits(rows, out, idx)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"byKey": out})
 }
 
@@ -441,26 +419,16 @@ var (
 	tagParts      = regexp.MustCompile(`[^A-Za-z0-9]+`)
 )
 
-// bannedTagOf : le tag refusé qui termine ce nom (« …x264-DreadTeam »,
-// « …-Dread-Team.mkv », « …[TOXIC] »), comme le site (lib/banned-tags.ts) :
-// après un tiret ou entre crochets, séparateurs internes du tag facultatifs.
-func bannedTagOf(name string, list []v3x.TeamPolicy) *v3x.TeamPolicy {
-	base := tagBase(name)
-	for i := range list {
-		if re := bannedPattern(list[i].Name); re != nil && re.MatchString(base) {
-			return &list[i]
-		}
-	}
-	return nil
-}
-
 // tagBase : le nom sans titre entre parenthèses en fin ni extension.
 func tagBase(name string) string {
 	base := trailingTitle.ReplaceAllString(strings.TrimSpace(name), "")
 	return fileExt.ReplaceAllString(base, "")
 }
 
-// bannedPattern : le motif d'un tag refusé (nil s'il est vide).
+// bannedPattern : le motif d'un tag refusé (nil s'il est vide), qui reconnaît
+// ce tag en fin de nom (« …x264-DreadTeam », « …-Dread-Team.mkv »,
+// « …[TOXIC] ») comme le site (lib/banned-tags.ts) : après un tiret ou entre
+// crochets, séparateurs internes du tag facultatifs. Comparé à tagBase(nom).
 func bannedPattern(tag string) *regexp.Regexp {
 	var q []string
 	for _, p := range tagParts.Split(tag, -1) {

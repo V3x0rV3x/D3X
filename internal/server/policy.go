@@ -30,11 +30,15 @@ import (
 type policyIndex struct {
 	banned   []v3x.TeamPolicy
 	bannedRe []*regexp.Regexp
-	byTag    map[string]policyHit
+	// byTag : les tags en minuscules, pour le tag de groupe après un tiret
+	// (« …x264-mhdgz » compte, comme sur le site) ; exact : les mêmes, écrits
+	// comme la team les écrit, pour le dernier mot d'un nom sans tiret.
+	byTag map[string]policyHit
+	exact map[string]policyHit
 }
 
 func indexPolicies(list []v3x.TeamPolicy) policyIndex {
-	idx := policyIndex{byTag: map[string]policyHit{}}
+	idx := policyIndex{byTag: map[string]policyHit{}, exact: map[string]policyHit{}}
 	for _, t := range list {
 		if t.Policy == "banned" {
 			idx.banned = append(idx.banned, t)
@@ -45,13 +49,18 @@ func indexPolicies(list []v3x.TeamPolicy) policyIndex {
 			continue
 		}
 		for _, tag := range t.Tags {
-			idx.byTag[strings.ToLower(tag)] = policyHit{Team: t.Name, Policy: t.Policy}
+			h := policyHit{Team: t.Name, Policy: t.Policy}
+			idx.byTag[strings.ToLower(tag)] = h
+			if tag = strings.TrimSpace(tag); tag != "" {
+				idx.exact[tag] = h
+			}
 		}
 	}
 	return idx
 }
 
-// of : comme policyOf, avec les motifs déjà compilés.
+// of : la règle de V3X qui vise ce nom (groupe refusé, puis team qui interdit
+// le réupload ou le soumet à son accord), d'après son tag de fin.
 func (idx policyIndex) of(name string) (policyHit, bool) {
 	base := tagBase(name)
 	for i, re := range idx.bannedRe {
@@ -65,8 +74,13 @@ func (idx policyIndex) of(name string) (policyHit, bool) {
 			return h, true
 		}
 	}
+	// Tag séparé par un espace ou un point (« … x264 ac3 mHDgz.mkv ») :
+	// seulement écrit exactement comme la team l'écrit. Sans tenir compte de
+	// la casse, le dernier mot d'un titre ordinaire passait pour un tag
+	// (CoprinusComatus, 12/11/26 : l'album « Skunk Anansie - Post Orgasmic
+	// Chill (1999) » bloqué en « Réupload sur accord · CHiLL »).
 	if t := lastToken(name); t != "" {
-		if h, ok := idx.byTag[strings.ToLower(t)]; ok {
+		if h, ok := idx.exact[t]; ok {
 			return h, true
 		}
 	}
