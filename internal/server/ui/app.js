@@ -64,7 +64,18 @@ const ui = {
   view: "cross",
   showIgnored: false, // « Pas sur V3X » : réafficher les releases ignorées
   showMasked: false, // « Autres » : réafficher les lignes masquées
+  // Tri choisi en cliquant Release ou Taille (bossman74, 12/11/26) ; vide =
+  // l'ordre de l'onglet (demandes primées, relais, releases mortes en tête).
+  sort: loadSort(),
 };
+
+function loadSort() {
+  try {
+    const v = JSON.parse(localStorage.getItem("d3x-cross-sort") || "null");
+    if (v && (v.col === "name" || v.col === "size") && (v.dir === 1 || v.dir === -1)) return v;
+  } catch (e) { /* rien */ }
+  return { col: "", dir: 1 };
+}
 
 // ---------- utilitaires ----------
 
@@ -1513,6 +1524,16 @@ function renderRows() {
     const rank = (r) => (relayOf(r) ? 0 : r.match && r.match.dead ? 1 : 2);
     list = list.map((r, i) => [r, rank(r), i]).sort((a, b) => a[1] - b[1] || a[2] - b[2]).map((x) => x[0]);
   }
+  if (ui.sort.col) {
+    const key = ui.sort.col === "size" ? (r) => (r.match ? r.match.size : r.size) || 0 : (r) => (r.name || "").toLowerCase();
+    const d = ui.sort.dir;
+    list = list.map((r, i) => [r, key(r), i]).sort((a, b) => (a[1] < b[1] ? -d : a[1] > b[1] ? d : a[2] - b[2])).map((x) => x[0]);
+  }
+  for (const b of document.querySelectorAll("#view-cross .th-sort")) {
+    const on = b.dataset.sort === ui.sort.col;
+    b.classList.toggle("on", on);
+    b.querySelector(".sort-ind").textContent = on ? (ui.sort.dir === 1 ? " ↑" : " ↓") : "";
+  }
   const tbody = $("#tbody");
   tbody.replaceChildren();
   for (const r of list.slice(0, ui.shown)) tbody.append(rowEl(r));
@@ -1988,6 +2009,19 @@ async function boot() {
     const r = ui.rows.find((x) => ui.picked.has(x.key));
     if (r) publishRow(r, $("#pick-publish"));
   });
+  // Tri : 1er clic (taille : la plus grosse d'abord), 2e clic dans l'autre
+  // sens, 3e clic retour à l'ordre de l'onglet.
+  for (const b of document.querySelectorAll("#view-cross .th-sort")) {
+    b.addEventListener("click", () => {
+      const col = b.dataset.sort;
+      const first = col === "size" ? -1 : 1;
+      if (ui.sort.col !== col) ui.sort = { col, dir: first };
+      else if (ui.sort.dir === first) ui.sort = { col, dir: -first };
+      else ui.sort = { col: "", dir: 1 };
+      try { localStorage.setItem("d3x-cross-sort", JSON.stringify(ui.sort)); } catch (e) { /* rien */ }
+      renderRows();
+    });
+  }
   $("#check-all").addEventListener("change", (ev) => {
     const tab = TABS.find((t) => t.id === ui.tab);
     for (const r of ui.rows) {
