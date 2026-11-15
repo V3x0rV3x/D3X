@@ -202,8 +202,8 @@ Les mises à jour s'installent d'un clic depuis D3X, et seulement après deux v�
 
 Premier lancement :
 
-- **Windows** affiche parfois « Windows a protégé votre ordinateur » pour un programme qu'il ne connaît pas encore : *Informations complémentaires*, puis *Exécuter quand même*.
-- **macOS** : `xattr -d com.apple.quarantine d3x_darwin_*` puis `chmod +x d3x_darwin_*`, ou clic droit ▸ Ouvrir.
+- **Windows** affiche parfois « Windows a protégé votre ordinateur » pour un programme qu'il ne connaît pas encore : *Informations complémentaires*, puis *Exécuter quand même*. Si **Windows Defender** a mis la 1.1.57 en quarantaine (« Behavior:Win32/DefenseEvasion.A!ml » au clic sur « Ouvrir dans le navigateur ») : c'était un faux positif, prends la 1.1.58 ou plus récente, qui ouvre le navigateur par l'appel normal de Windows.
+- **macOS** : `xattr -d com.apple.quarantine d3x_darwin_*` puis `chmod +x d3x_darwin_*`. Depuis macOS 15 (Sequoia), le clic droit ▸ Ouvrir ne suffit plus : lance D3X une fois, puis *Réglages Système ▸ Confidentialité et sécurité ▸ Ouvrir quand même*.
 - **Linux** : `chmod +x d3x_linux_*`.
 
 ### Zone de notification (Windows)

@@ -103,17 +103,5 @@ func profileArgs(profileDir string) []string {
 // Wait attend la fermeture de la fenêtre.
 func (w *Window) Wait() { _ = w.cmd.Wait() }
 
-// OpenDefault ouvre la page dans le navigateur par défaut.
-func OpenDefault(url string) error {
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
-	case "darwin":
-		cmd = exec.Command("open", url)
-	default:
-		cmd = exec.Command("xdg-open", url)
-	}
-	hideConsole(cmd)
-	return cmd.Start()
-}
+// OpenDefault (open_windows.go, open_other.go) ouvre la page dans le
+// navigateur par défaut.
