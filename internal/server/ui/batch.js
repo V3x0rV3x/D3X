@@ -172,7 +172,10 @@ async function lotBrowse(path) {
       up.append(el("span", "fs-ico dir"), b);
       ul.append(up);
     }
-    for (const e of r.entries.filter((x) => x.dir && !x.skip)) {
+    // Un dossier « caché » (.cross-seed…) s'ouvre aussi : c'est un dossier
+    // qui CONTIENT des releases ; seule une release dont le nom commence par un
+    // point est écartée par le lot (Encrypted_Shards, 15/11/26).
+    for (const e of r.entries.filter((x) => x.dir)) {
       const li = el("li");
       const b = el("button", "fs-name", e.name);
       b.type = "button";
