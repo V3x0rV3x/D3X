@@ -113,6 +113,11 @@ func (d *fakeDeps) PubCancel(id string) {
 	d.cancelled = append(d.cancelled, id)
 	d.mu.Unlock()
 }
+func (d *fakeDeps) cancelledCopy() []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]string(nil), d.cancelled...)
+}
 func (d *fakeDeps) PubPublish(ctx context.Context, id string, fields map[string]string) error {
 	d.sawCtx(ctx, "PubPublish")
 	if d.pubPublish == nil {

@@ -516,9 +516,16 @@ func TestProcessPolicy(t *testing.T) {
 	if en := got[free.Path]; en.State != "published" {
 		t.Errorf("libre : %+v", en)
 	}
-	// Les deux releases refusées ne sont jamais hachées.
-	if p.starts != 1 {
-		t.Errorf("%d publications démarrées, attendu 1", p.starts)
+	// La recherche de doublon passe avant la règle (une release déjà sur V3X va
+	// dans « Déjà présent ») : les trois démarrent, les deux refusées sont
+	// annulées aussitôt, jamais envoyées.
+	if p.starts != 3 || len(p.fields) != 1 {
+		t.Errorf("%d publications démarrées (attendu 3), %d envoyées (attendu 1)", p.starts, len(p.fields))
+	}
+	for _, path := range []string{tagged.Path, detag.Path} {
+		if !contains(d.cancelledCopy(), "job-"+path) {
+			t.Errorf("job de %s pas annulé : %v", path, d.cancelledCopy())
+		}
 	}
 	for _, q := range seen {
 		if !q.Local || q.Path == "" {
@@ -535,8 +542,24 @@ func TestProcessPolicy(t *testing.T) {
 	d, p = happy(free)
 	d.policy = func(PolicyQuery) (*PolicyStop, error) { return nil, errors.New("site injoignable") }
 	r = run(t, quick(d), Options{}, free.Path)
-	if en := r.Entries[0]; en.State != "error" || !strings.Contains(en.Detail, "règles de réupload des teams illisibles") || p.starts != 0 {
-		t.Errorf("règles illisibles : %+v, %d démarrages", en, p.starts)
+	if en := r.Entries[0]; en.State != "error" || !strings.Contains(en.Detail, "règles de réupload des teams illisibles") || len(p.fields) != 0 || !contains(d.cancelledCopy(), "job-"+free.Path) {
+		t.Errorf("règles illisibles : %+v, %d envois", en, len(p.fields))
+	}
+
+	// Déjà sur V3X : « Déjà présent », même si la team demande une
+	// autorisation (Encrypted_Shards, 13/11/26).
+	d, p = happy(tagged)
+	p.make = func(path string) *publish.Job {
+		j := videoJob(path)
+		j.Duplicate = &v3x.Match{Kind: "exact", ID: "fiche-mhdgz", Name: tagged.Name}
+		return j
+	}
+	d.policy = func(PolicyQuery) (*PolicyStop, error) {
+		return &PolicyStop{Label: "Autorisation · mHDgz", Motive: "demande l'accord de la team"}, nil
+	}
+	r = run(t, quick(d), Options{}, tagged.Path)
+	if en := r.Entries[0]; en.State != "duplicate" || len(p.fields) != 0 {
+		t.Errorf("déjà présente, team à autorisation : %+v", en)
 	}
 
 	// Fiche gardée : le nom choisi dans Publier passe aussi la règle.

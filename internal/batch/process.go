@@ -155,12 +155,6 @@ func (e *Engine) process(l *lot, en *Entry) {
 		e.decide(src, en, "review", "dossier sans fichier à sa racine (collection, plusieurs releases ?)", "")
 		return
 	}
-	// Le nom repris de la vidéo passe aussi la règle : c'est lui qui porte le
-	// tag du groupe quand le dossier n'en a pas.
-	if e.policyStopped(l, en, en.ReleaseName) {
-		return
-	}
-
 	j, err := e.deps.PubStart(ctx, src, en.Path)
 	if err != nil {
 		e.decide(src, en, "error", err.Error(), "")
@@ -173,16 +167,26 @@ func (e *Engine) process(l *lot, en *Entry) {
 		e.decide(src, en, "error", dupCheckFailed(j.DupError), "")
 		return
 	}
+	// Doublon AVANT la règle des teams : une release déjà sur V3X va dans
+	// « Déjà présent », même si sa team demande une autorisation. Elle tombait
+	// dans « À vérifier » (Encrypted_Shards, 13/11/26). Le job vient d'être
+	// créé, il est annulé tout de suite.
+	if j.Duplicate != nil {
+		cancel()
+		e.decide(src, en, "duplicate", dupText(j.Duplicate), j.Duplicate.ID)
+		return
+	}
+	// Le nom repris de la vidéo passe aussi la règle : c'est lui qui porte le
+	// tag du groupe quand le dossier n'en a pas.
+	if e.policyStopped(l, en, en.ReleaseName) {
+		cancel()
+		return
+	}
 	if !o.Sim { // simulée, la publication est annulée : rien à poser
 		if err := e.deps.PubSetLinks(j.ID, o.Links); err != nil && o.Links {
 			// Refusée : elle partira sur ses fichiers d'origine, la ligne dira pourquoi.
 			e.set(func(*Run) { en.linksRefused = err.Error() })
 		}
-	}
-	if j.Duplicate != nil {
-		cancel()
-		e.decide(src, en, "duplicate", dupText(j.Duplicate), j.Duplicate.ID)
-		return
 	}
 	if j.Gone != nil {
 		cancel()
@@ -445,7 +449,8 @@ func (e *Engine) process(l *lot, en *Entry) {
 // l'interdit ou le soumet à son accord sans te l'avoir donné, groupe refusé,
 // ou detag de l'une d'elles, reconnu à la taille d'une copie taguée). Elle va
 // dans « À vérifier » avec la même pastille et la même raison que dans « Pas
-// sur V3X », avant tout hachage, quelle que soit son origine (dossier
+// sur V3X », une fois la recherche de doublon faite et avant le hachage,
+// quelle que soit son origine (dossier
 // parcouru, liste, fiche gardée). Règles illisibles : erreur, rien ne part à
 // l'aveugle. names : d'autres noms à vérifier que celui de l'entrée.
 func (e *Engine) policyStopped(l *lot, en *Entry, names ...string) bool {
