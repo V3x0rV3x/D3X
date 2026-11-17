@@ -66,6 +66,10 @@ type proc struct {
 	cmd string // ligne de commande, en minuscules
 }
 
+// appBrowserExe : les navigateurs que D3X sait lancer en fenêtre d'application
+// (window.go, appBrowser), par nom de processus.
+var appBrowserExe = map[string]bool{"msedge.exe": true, "chrome.exe": true, "brave.exe": true, "vivaldi.exe": true}
+
 // profileProcs : ces processus avec leur ligne de commande.
 func profileProcs(profileDir string) []proc {
 	want := strings.ToLower(profileDir)
@@ -82,7 +86,7 @@ func profileProcs(profileDir string) []proc {
 	var out []proc
 	for err = windows.Process32First(snap, &e); err == nil; err = windows.Process32Next(snap, &e) {
 		name := strings.ToLower(windows.UTF16ToString(e.ExeFile[:]))
-		if name != "msedge.exe" && name != "chrome.exe" {
+		if !appBrowserExe[name] {
 			continue
 		}
 		cmd, ok := commandLine(e.ProcessID)

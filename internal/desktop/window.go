@@ -1,6 +1,6 @@
 // Package desktop donne à D3X sa fenêtre d'application : la page dans une
-// fenêtre sans barre d'adresse (Edge ou Chrome en mode application, profil à
-// part), l'icône de la zone de notification sous Windows et les messages
+// fenêtre sans barre d'adresse (Edge, Chrome, Brave ou Vivaldi en mode
+// application, profil à part), l'icône de la zone de notification sous Windows et les messages
 // d'erreur quand il n'y a pas de console.
 package desktop
 
@@ -26,7 +26,12 @@ func appBrowser() string {
 			if base := os.Getenv(env); base != "" {
 				cands = append(cands,
 					filepath.Join(base, `Microsoft\Edge\Application\msedge.exe`),
-					filepath.Join(base, `Google\Chrome\Application\chrome.exe`))
+					filepath.Join(base, `Google\Chrome\Application\chrome.exe`),
+					// Brave et Vivaldi (AsTaGoR, 17/11/26 : Windows sans Edge,
+					// D3X s'ouvrait dans un onglet de Brave). Même moteur, même
+					// mode application ; en dernier, Edge et Chrome passent avant.
+					filepath.Join(base, `BraveSoftware\Brave-Browser\Application\brave.exe`),
+					filepath.Join(base, `Vivaldi\Application\vivaldi.exe`))
 			}
 		}
 	case "darwin":
@@ -34,9 +39,11 @@ func appBrowser() string {
 			"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
 			"/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
 			"/Applications/Chromium.app/Contents/MacOS/Chromium",
+			"/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+			"/Applications/Vivaldi.app/Contents/MacOS/Vivaldi",
 		}
 	default:
-		for _, n := range []string{"chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "microsoft-edge"} {
+		for _, n := range []string{"chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "microsoft-edge", "brave-browser", "brave", "vivaldi"} {
 			if p, err := exec.LookPath(n); err == nil {
 				cands = append(cands, p)
 			}

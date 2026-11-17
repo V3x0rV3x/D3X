@@ -198,7 +198,7 @@ Le logo, la barre latérale et les polices du site, pour ne pas être perdu. D3X
    - Windows : `d3x_windows_amd64.exe`
    - macOS : `d3x_darwin_arm64` (puces Apple) ou `d3x_darwin_amd64` (Intel)
    - Linux : `d3x_linux_amd64` ou `d3x_linux_arm64`
-2. Lance-le. D3X s'ouvre dans sa propre fenêtre ; sous Windows, son icône apparaît aussi près de l'horloge (voir [Zone de notification](#zone-de-notification-windows)). Tout reste sur ta machine (`http://127.0.0.1`). Fermer la fenêtre arrête D3X, sauf s'il a un travail en cours (il le termine d'abord), si la surveillance est active, si tu as choisi de le garder lancé ou s'il a démarré réduit (il reste alors dans la zone de notification).
+2. Lance-le. D3X s'ouvre dans sa propre fenêtre, avec Edge, Chrome, Brave ou Vivaldi (Brave et Vivaldi depuis la 1.1.61) ; sans aucun des quatre, il s'ouvre dans un onglet de ton navigateur habituel. Sous Windows, son icône apparaît aussi près de l'horloge (voir [Zone de notification](#zone-de-notification-windows)). Tout reste sur ta machine (`http://127.0.0.1`). Fermer la fenêtre arrête D3X, sauf s'il a un travail en cours (il le termine d'abord), si la surveillance est active, si tu as choisi de le garder lancé ou s'il a démarré réduit (il reste alors dans la zone de notification).
 
 Les mises à jour s'installent d'un clic depuis D3X, et seulement après deux vérifications : la liste des empreintes doit être signée par la clé de V3X, et le fichier doit avoir l'empreinte annoncée. D3X cherche une nouvelle version toutes les heures ; le bouton **Vérifier**, sous le numéro de version en bas à gauche, cherche tout de suite.
 
