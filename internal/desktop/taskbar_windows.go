@@ -255,6 +255,9 @@ func applyIdentity(hs []windows.HWND, exe string) bool {
 	}
 	set := false
 	for _, h := range hs {
+		// L'icône d'abord, même si la fenêtre a déjà l'identité : le navigateur
+		// peut remettre la sienne pendant le chargement de la page.
+		setWindowIcon(h)
 		ps := windowStore(h)
 		if ps == nil {
 			continue
@@ -265,4 +268,58 @@ func applyIdentity(hs []windows.HWND, exe string) bool {
 		ps.release()
 	}
 	return set
+}
+
+var (
+	pCreateIconFromResourceEx = windows.NewLazySystemDLL("user32.dll").NewProc("CreateIconFromResourceEx")
+	pSendMessageTimeout       = windows.NewLazySystemDLL("user32.dll").NewProc("SendMessageTimeoutW")
+	pGetSystemMetrics         = windows.NewLazySystemDLL("user32.dll").NewProc("GetSystemMetrics")
+)
+
+const (
+	wmGetIcon       = 0x007F
+	wmSetIcon       = 0x0080
+	iconSmall       = 0
+	iconBig         = 1
+	smCxIcon        = 11
+	smCxSmIcon      = 49
+	smtoAbortIfHung = 0x0002
+)
+
+// windowIcons : les icônes de D3X (grande et petite), tirées de icon.ico,
+// créées une fois et gardées tant que D3X tourne (la fenêtre s'en sert).
+var windowIcons = sync.OnceValues(func() (uintptr, uintptr) {
+	mk := func(metric uintptr, fallback int) uintptr {
+		size := fallback
+		if r, _, _ := pGetSystemMetrics.Call(metric); r > 0 && r <= 256 {
+			size = int(r)
+		}
+		img := icoImage(Icon, size)
+		if len(img) == 0 || pCreateIconFromResourceEx.Find() != nil {
+			return 0
+		}
+		h, _, _ := pCreateIconFromResourceEx.Call(uintptr(unsafe.Pointer(&img[0])), uintptr(len(img)), 1, 0x00030000, uintptr(size), uintptr(size), 0)
+		return h
+	}
+	return mk(smCxIcon, 32), mk(smCxSmIcon, 16)
+})
+
+// setWindowIcon pose l'icône de D3X sur la fenêtre du navigateur. Edge et
+// Chrome y mettaient l'icône de la page, mais Brave laissait une icône vide
+// dans la barre des tâches (AsTaGoR, 17/11/26). Rien n'est envoyé si la
+// fenêtre porte déjà nos icônes ; une fenêtre qui ne répond pas n'attend pas.
+func setWindowIcon(h windows.HWND) {
+	big, small := windowIcons()
+	for _, ic := range []struct{ kind, icon uintptr }{{iconBig, big}, {iconSmall, small}} {
+		if ic.icon == 0 {
+			continue
+		}
+		var cur uintptr
+		pSendMessageTimeout.Call(uintptr(h), wmGetIcon, ic.kind, 0, smtoAbortIfHung, 200, uintptr(unsafe.Pointer(&cur)))
+		if cur == ic.icon {
+			continue
+		}
+		var res uintptr
+		pSendMessageTimeout.Call(uintptr(h), wmSetIcon, ic.kind, ic.icon, smtoAbortIfHung, 200, uintptr(unsafe.Pointer(&res)))
+	}
 }
