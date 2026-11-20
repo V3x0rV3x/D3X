@@ -62,7 +62,7 @@ func Dominates(audioBytes, videoBytes int64) bool {
 // ReadFile lit une piste. Une piste illisible renvoie son erreur dans Track.
 func ReadFile(abs, rel string) Track {
 	t := Track{Rel: rel}
-	f, err := os.Open(abs)
+	f, err := os.Open(maketorrent.OSPath(abs))
 	if err != nil {
 		t.Error = err.Error()
 		return t

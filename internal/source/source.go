@@ -58,7 +58,7 @@ func (Local) Entries(_ context.Context, p []string, ex []string) ([]releases.Ent
 	return releases.Entries(p, ex), nil
 }
 func (Local) Exists(_ context.Context, p string) bool {
-	_, err := os.Stat(p)
+	_, err := os.Stat(maketorrent.OSPath(p))
 	return err == nil
 }
 func (Local) Scan(_ context.Context, p string, ex []string) (*maketorrent.Plan, error) {
@@ -71,7 +71,7 @@ func (Local) Audio(_ context.Context, p *maketorrent.Plan, _ []string) (*audio.A
 	return audio.FromPlan(p), nil
 }
 func (Local) ReadAt(ctx context.Context, p string, off, n int64) ([]byte, error) {
-	f, err := os.Open(p)
+	f, err := os.Open(maketorrent.OSPath(p))
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +79,7 @@ func (Local) ReadAt(ctx context.Context, p string, off, n int64) ([]byte, error)
 	return io.ReadAll(maketorrent.Paced(ctx, io.NewSectionReader(f, off, n)))
 }
 func (Local) Names(_ context.Context, d string) []string {
-	list, err := os.ReadDir(d)
+	list, err := os.ReadDir(maketorrent.OSPath(d))
 	if err != nil {
 		return nil
 	}

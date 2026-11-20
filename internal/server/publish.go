@@ -87,6 +87,17 @@ func apiFail(w http.ResponseWriter, err error) {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": msg, "code": ae.Code})
 			return
 		}
+		// Limite d'appels, ou site en panne (sa page d'erreur HTML servait alors
+		// de code) : une phrase lisible, que la page affiche telle quelle
+		// (Hypsis, 19/11/26 : « Déjà sur V3X » muet sur une vérification ratée).
+		if status == http.StatusTooManyRequests {
+			writeJSON(w, status, map[string]string{"error": ae.Error(), "code": ae.Code})
+			return
+		}
+		if status >= 500 {
+			writeJSON(w, status, map[string]string{"error": "V3X ne répond pas pour l'instant (HTTP " + strconv.Itoa(status) + "), réessaie dans un moment", "code": ae.Code})
+			return
+		}
 		writeJSON(w, status, map[string]string{"error": ae.Code})
 		return
 	}

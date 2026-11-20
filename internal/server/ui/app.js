@@ -510,7 +510,7 @@ function editState(c) {
 function testHint(err) {
   if (!/pas de réponse|connexion impossible/.test(err || "")) return "";
   if (ui.state && ui.state.mode === "docker") {
-    return ". D3X tourne dans Docker : l'adresse doit être joignable depuis son conteneur (le nom du conteneur du client, ou l'adresse de la machine), jamais 127.0.0.1.";
+    return ". D3X tourne dans Docker : l'adresse doit être joignable depuis son conteneur, jamais 127.0.0.1 ni localhost (c'est le conteneur de D3X lui-même). Mets le nom du conteneur du client s'ils sont dans le même réseau Docker (même stack), sinon l'adresse IP de la machine et le port publié du client. Si rien ne répond à l'adresse IP de la machine, le pare-feu de la machine (NAS) bloque peut-être les adresses Docker (172.16.0.0/12) : autorise-les vers ce port.";
   }
   return ". Ouvre cette adresse dans un navigateur sur la machine où tourne D3X : si l'interface du client ne s'affiche pas, le souci est entre les deux (adresse, port, pare-feu)." +
     (ui.state && ui.state.mode ? "" : " Si le client tourne sur ce PC, « Détecter sur ce PC » trouve la bonne adresse.");
@@ -663,10 +663,19 @@ function clientBody(c, i, single) {
     if (!c.url.trim()) return toast("Indique l'adresse du client.", "bad");
     test.disabled = true;
     test.textContent = "Test en cours…";
+    status.className = "status";
+    status.textContent = "D3X attend la réponse du client (12 secondes au plus).";
     try {
       c.test = await api("/ui/client/test", clientPayload(c));
     } catch (e) {
-      if (e.message === "session") return;
+      // Session refusée : le bandeau le dit ; le bouton ne reste pas bloqué
+      // sur « Test en cours… ».
+      if (e.message === "session") {
+        test.disabled = false;
+        test.textContent = "Tester la connexion";
+        status.textContent = "";
+        return;
+      }
       c.test = { ok: false, error: e.message };
     }
     renderClients();

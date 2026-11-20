@@ -38,29 +38,34 @@ type Listing struct {
 // Browse liste un dossier. Sans chemin : les points de départ (lecteurs sous
 // Windows ; dossier perso, racine et montages ailleurs).
 func Browse(path string, exclude []string) (*Listing, error) {
-	path = strings.TrimSpace(path)
-	if path == "" {
+	if strings.TrimSpace(path) == "" {
 		return &Listing{Path: "", Parent: nil, Entries: roots()}, nil
 	}
-	abs, err := filepath.Abs(path)
+	// Le chemin tel quel d'abord : un dossier peut finir par une espace.
+	abs, err := maketorrent.AbsPath(path)
 	if err != nil {
 		return nil, err
 	}
-	st, err := os.Stat(abs)
+	st, err := os.Stat(maketorrent.OSPath(abs))
 	if err != nil {
-		return nil, errors.New("dossier introuvable")
+		if abs, err = maketorrent.AbsPath(strings.TrimSpace(path)); err != nil {
+			return nil, err
+		}
+		if st, err = os.Stat(maketorrent.OSPath(abs)); err != nil {
+			return nil, errors.New("dossier introuvable")
+		}
 	}
 	if !st.IsDir() {
 		abs = filepath.Dir(abs)
 	}
-	list, err := os.ReadDir(abs)
+	list, err := os.ReadDir(maketorrent.OSPath(abs))
 	if err != nil {
 		return nil, errors.New("lecture refusée : " + err.Error())
 	}
 	out := make([]FsEntry, 0, len(list))
 	for _, e := range list {
 		full := filepath.Join(abs, e.Name())
-		st, err := os.Stat(full) // suit les liens
+		st, err := os.Stat(maketorrent.OSPath(full)) // suit les liens
 		if err != nil {
 			continue
 		}
@@ -144,7 +149,7 @@ var execExt = map[string]bool{".exe": true, ".msi": true, ".bat": true, ".cmd": 
 
 // List : chaque entrée d'un dossier (sous-dossier ou fichier) est une release.
 func List(dir string, exclude []string) ([]Entry, error) {
-	list, err := os.ReadDir(dir)
+	list, err := os.ReadDir(maketorrent.OSPath(dir))
 	if err != nil {
 		return nil, errors.New("dossier illisible : " + err.Error())
 	}
@@ -174,7 +179,7 @@ func EntryOf(full string, exclude []string) Entry { return entryOf(full, exclude
 
 func entryOf(full string, exclude []string) Entry {
 	be := Entry{Name: filepath.Base(full), Path: full}
-	if st, err := os.Stat(full); err == nil {
+	if st, err := os.Stat(maketorrent.OSPath(full)); err == nil {
 		be.Dir = st.IsDir()
 	}
 	p, err := maketorrent.Scan(full, exclude)

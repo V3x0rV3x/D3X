@@ -457,8 +457,17 @@ func (s *Server) clientTest(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, errors.New("indique l'adresse du client"))
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(clientTestWait.Load()))
 	defer cancel()
 	k := dial(ctx, list[0])
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": k.c != nil, "version": k.ver, "error": k.err})
 }
+
+// clientTestWait : le plus long qu'attende « Tester la connexion », en
+// nanosecondes (raccourci dans les tests). Une adresse qui ne répond pas (pare-
+// feu du NAS qui jette les paquets venus du réseau Docker, mauvaise adresse)
+// gardait le bouton sur « Test en cours… » 20 s (neogamaes, 19/11/26) ; un
+// client qui marche répond en moins d'une seconde.
+var clientTestWait atomic.Int64
+
+func init() { clientTestWait.Store(int64(12 * time.Second)) }

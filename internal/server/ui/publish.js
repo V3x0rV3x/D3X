@@ -562,7 +562,12 @@ function renderJob() {
   add("Taille", fmtSize(j.total));
   add("Pièces", (j.pieceLength >= 1048576 ? j.pieceLength / 1048576 + " Mio" : j.pieceLength / 1024 + " Kio"));
   if (j.source && j.source !== "Ce PC") add("Sur", j.source);
-  if (j.skipped && j.skipped.length) add("Écartés", String(j.skipped.length));
+  if (j.skipped && j.skipped.length) {
+    // La liste au survol : un gros nombre d'écartés dit qu'il manque des
+    // fichiers, la liste dit lesquels et pourquoi (Turias, 18/11/26).
+    add("Écartés", String(j.skipped.length));
+    facts.lastChild.title = j.skipped.slice(0, 50).join("\n") + (j.skipped.length > 50 ? "\n…" : "");
+  }
 
   const dup = $("#job-dup");
   if (j.duplicate) {
@@ -803,6 +808,8 @@ async function loadFiche(force) {
   } catch (e) {
     if (seq !== pub.ficheSeq || e.message === "session") return;
     $("#fiche-state").textContent = "Fiche indisponible : " + e.message;
+    // Les versions ne dépendent pas de la fiche : cherchées quand même.
+    versionsSoon();
   }
 }
 
@@ -1123,7 +1130,7 @@ function versionsSoon() {
   versionsTimer = setTimeout(loadVersions, 600);
 }
 
-async function loadVersions() {
+async function loadVersions(force) {
   const j = pub.job;
   const box = $("#versions");
   if (!j || j.seedOnly) {
@@ -1137,17 +1144,41 @@ async function loadVersions() {
   if (leaf) q.set("category", leaf.slug);
   else if ($("#f-root").value) q.set("category", $("#f-root").value);
   const key = q.toString();
-  if (key === pub.versionsKey) return;
+  if (key === pub.versionsKey && force !== true) return;
   pub.versionsKey = key;
+  // La réponse vaut tant que c'est la dernière demande, pour la release encore
+  // ouverte : même identifiant, pas même objet. Pendant le hachage, pollJob
+  // remplace pub.job toutes les 700 ms ; comparer l'objet jetait presque toutes
+  // les réponses (hachage long sur un NAS), et la même demande n'était plus
+  // refaite : liste absente, ou celle d'avant le choix TMDB (Hypsis, 19/11/26).
+  const current = () => pub.versionsKey === key && pub.job && pub.job.id === j.id;
   let r;
   try {
     r = await api("/ui/pub/versions?" + key);
   } catch (e) {
-    if (pub.versionsKey === key) pub.versionsKey = "";
+    if (!current()) return;
+    pub.versionsKey = ""; // la prochaine retouche redemande
+    if (e.message !== "session") versionsFailed(e.message);
     return;
   }
-  if (pub.versionsKey !== key || pub.job !== j) return;
-  renderVersions(r, j);
+  if (!current()) return;
+  renderVersions(r, pub.job);
+}
+
+// Vérification impossible (V3X injoignable, limite d'appels…) : dit tel quel,
+// avec de quoi réessayer, au lieu d'une liste vide ou d'une vieille liste qui
+// feraient croire à un résultat.
+function versionsFailed(msg) {
+  $("#versions-redo").classList.add("hidden");
+  $("#versions-list").replaceChildren();
+  $("#versions-ignore").parentElement.classList.add("hidden");
+  const hint = $("#versions-hint");
+  hint.replaceChildren(document.createTextNode("Vérification impossible pour l'instant : " + msg + ". "));
+  const again = el("button", "link", "Réessayer");
+  again.type = "button";
+  again.addEventListener("click", () => loadVersions(true));
+  hint.append(again);
+  $("#versions").classList.remove("hidden");
 }
 
 function renderVersions(r, j) {
@@ -1155,6 +1186,7 @@ function renderVersions(r, j) {
   const list = (r.versions || []).filter((v) => !(j.duplicate && v.id === j.duplicate.id));
   const redo = (r.redo || []).filter((v) => !(j.duplicate && v.id === j.duplicate.id));
   box.classList.toggle("hidden", list.length === 0 && redo.length === 0);
+  $("#versions-ignore").parentElement.classList.remove("hidden");
   const warn = $("#versions-redo");
   warn.classList.toggle("hidden", redo.length === 0);
   if (redo.length) {

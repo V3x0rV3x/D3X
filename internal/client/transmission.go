@@ -34,16 +34,53 @@ func newTransmission(o Options) (Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	path := strings.TrimRight(u.Path, "/")
-	if !strings.HasSuffix(path, "/rpc") {
-		path += "/transmission/rpc"
-	}
-	u.Path = path
+	u.Path, u.RawPath, u.RawQuery, u.Fragment = trRPCPath(u.Path), "", "", ""
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	if o.Insecure {
 		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // choix du membre
 	}
 	return &transmission{rpc: u.String(), user: o.User, pass: o.Pass, hc: &http.Client{Timeout: 2 * time.Minute, Transport: tr}}, nil
+}
+
+// trRPCPath : le chemin du RPC d'après l'adresse saisie. L'adresse de
+// l'interface web, copiée telle quelle depuis le navigateur
+// (« :9091/transmission/web/ »), visait « /transmission/web/transmission/rpc »
+// et Transmission répondait 404 (neogamaes, 19/11/26). Un chemin qui finit
+// par /rpc (RPC déplacé, proxy) est gardé tel quel.
+func trRPCPath(p string) string {
+	p = strings.TrimRight(p, "/")
+	if strings.HasSuffix(p, "/rpc") {
+		return p
+	}
+	// Interface web (…/transmission/web/…) ou dossier /transmission : on
+	// remonte au-dessus. Tout autre chemin (proxy) est gardé comme avant.
+	if i := strings.Index(p, "/transmission/web"); i >= 0 {
+		p = p[:i]
+	} else {
+		p = strings.TrimSuffix(p, "/transmission")
+	}
+	return p + "/transmission/rpc"
+}
+
+// trHTTPError : un refus de Transmission, dit en clair. Ses deux listes
+// blanches répondent tout de suite, avec un code que le membre ne sait pas
+// lire : 403 pour l'adresse IP de D3X (un conteneur Docker a sa propre
+// adresse, souvent 172.x), 421 pour le nom d'hôte (nom du conteneur).
+func trHTTPError(status int, body []byte, host string) error {
+	low := strings.ToLower(string(body))
+	switch {
+	case status == http.StatusForbidden && strings.Contains(low, "too many unsuccessful login"):
+		return errors.New("Transmission bloque l'accès après trop d'échecs de mot de passe : redémarre Transmission, puis vérifie l'utilisateur et le mot de passe")
+	case status == http.StatusForbidden && strings.Contains(low, "whitelist"):
+		return errors.New("Transmission refuse l'adresse IP de D3X (liste « rpc-whitelist ») : ajoute l'adresse de la machine ou du conteneur de D3X à rpc-whitelist dans le settings.json de Transmission (Transmission arrêté), ou mets rpc-whitelist-enabled à false ; image linuxserver : variable WHITELIST")
+	case status == http.StatusForbidden:
+		return errors.New("Transmission refuse l'accès (HTTP 403)")
+	case status == http.StatusMisdirectedRequest:
+		return fmt.Errorf("Transmission ne reconnaît pas le nom « %s » (liste « rpc-host-whitelist ») : mets plutôt l'adresse IP de la machine, ou ajoute ce nom à rpc-host-whitelist dans le settings.json de Transmission ; image linuxserver : variable HOST_WHITELIST", host)
+	case status == http.StatusNotFound:
+		return errors.New("rien de Transmission à cette adresse (HTTP 404) : vérifie le port (9091 par défaut) et le chemin (/transmission/rpc)")
+	}
+	return fmt.Errorf("Transmission : HTTP %d", status)
 }
 
 func (t *transmission) Kind() string { return "Transmission" }
@@ -75,7 +112,7 @@ func (t *transmission) call(ctx context.Context, method string, args interface{}
 			return ErrAuth
 		}
 		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("Transmission : HTTP %d", resp.StatusCode)
+			return trHTTPError(resp.StatusCode, data, req.URL.Hostname())
 		}
 		var env struct {
 			Result    string          `json:"result"`

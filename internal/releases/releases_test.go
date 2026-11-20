@@ -3,6 +3,7 @@ package releases
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/V3x0rV3x/D3X/internal/maketorrent"
@@ -134,5 +135,49 @@ func TestEntryKind(t *testing.T) {
 	}
 	if len(want) > 0 {
 		t.Errorf("releases absentes de la liste : %v", want)
+	}
+}
+
+// Dossiers dont le nom finit par un point ou une espace (créés sur un NAS sous
+// Linux) : sous Windows, le sélecteur ne les montrait pas, le lot les
+// déclarait illisibles et un chemin tapé perdait son espace finale.
+func TestTrailingDotAndSpaceFolders(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "Packs")
+	sys := func(p string) string {
+		if runtime.GOOS == "windows" {
+			return `\\?\` + p
+		}
+		return p
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(sys(dir)) })
+	if err := os.Mkdir(sys(dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{"Agents of S.H.I.E.L.D.", "Vol 2 "} {
+		if err := os.Mkdir(sys(filepath.Join(dir, d)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(sys(filepath.Join(dir, d, "a.mkv")), make([]byte, 5000), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	l, err := Browse(dir, nil)
+	if err != nil || len(l.Entries) != 2 {
+		t.Fatalf("sélecteur : %+v %v", l, err)
+	}
+	for _, e := range l.Entries {
+		in, err := Browse(e.Path, nil)
+		if err != nil || len(in.Entries) != 1 || in.Entries[0].Size != 5000 {
+			t.Fatalf("dossier %q : %+v %v", e.Name, in, err)
+		}
+	}
+	list, err := List(dir, nil)
+	if err != nil || len(list) != 2 {
+		t.Fatalf("lot : %+v %v", list, err)
+	}
+	for _, e := range list {
+		if e.Error != "" || e.Size != 5000 || !e.Dir {
+			t.Errorf("lot, %q : %+v", e.Name, e)
+		}
 	}
 }

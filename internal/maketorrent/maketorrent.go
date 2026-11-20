@@ -61,11 +61,11 @@ type Plan struct {
 
 // Scan liste la release (un fichier, ou un dossier et tout son contenu).
 func Scan(root string, exclude []string) (*Plan, error) {
-	abs, err := filepath.Abs(root)
+	abs, err := AbsPath(root)
 	if err != nil {
 		return nil, err
 	}
-	st, err := os.Stat(abs)
+	st, err := os.Stat(OSPath(abs))
 	if err != nil {
 		return nil, err
 	}
@@ -141,9 +141,10 @@ var systemDirs = map[string]bool{
 // walk parcourt un dossier en suivant les liens symboliques : un lien compte
 // pour sa cible (sinon le torrent annonce la taille du lien et le hachage lit
 // la cible). Lien cassé ignoré ; lien vers un dossier déjà parcouru ou parent
-// ignoré, pour ne jamais boucler ni hacher un disque entier.
+// ignoré, pour ne jamais boucler ni hacher un disque entier. Les chemins
+// gardés (Abs) sont les chemins ordinaires ; le système reçoit OSPath.
 func (p *Plan) walk(dir, rel string, seen map[string]bool, exclude []string) error {
-	entries, err := os.ReadDir(dir)
+	entries, err := os.ReadDir(OSPath(dir))
 	if err != nil {
 		return err
 	}
@@ -158,16 +159,21 @@ func (p *Plan) walk(dir, rel string, seen map[string]bool, exclude []string) err
 			continue
 		}
 		full := filepath.Join(dir, name)
-		st, err := os.Stat(full)
+		st, err := os.Stat(OSPath(full))
 		if err != nil {
 			p.Skipped = append(p.Skipped, r+" (lien cassé ou illisible)")
 			continue
 		}
 		switch {
 		case st.IsDir():
-			real, err := filepath.EvalSymlinks(full)
-			if err != nil {
-				real = full
+			// Un nom qui finit par un point ou une espace n'est pas résolu :
+			// Windows le lirait sans ce point, peut-être un dossier voisin
+			// déjà parcouru.
+			real := full
+			if OSPath(full) == full {
+				if target, err := filepath.EvalSymlinks(full); err == nil {
+					real = target
+				}
 			}
 			if seen[real] {
 				p.Skipped = append(p.Skipped, r+" (déjà parcouru)")
@@ -342,7 +348,7 @@ func (p *Plan) hashPieces(ctx context.Context, progress Progress) ([]byte, error
 			return err
 		}
 		for _, f := range p.Files {
-			fh, err := os.Open(f.Abs)
+			fh, err := os.Open(OSPath(f.Abs))
 			if err != nil {
 				return err
 			}

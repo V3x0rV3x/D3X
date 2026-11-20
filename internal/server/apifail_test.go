@@ -35,3 +35,31 @@ func TestAPIFailNeverSends401(t *testing.T) {
 		}
 	}
 }
+
+// Une vérification ratée (limite d'appels, site en panne derrière sa page
+// d'erreur HTML) arrive à la page en phrase lisible, avec son code HTTP :
+// « Déjà sur V3X » l'affiche au lieu de se taire (Hypsis, 19/11/26).
+func TestAPIFailReadable(t *testing.T) {
+	for _, tc := range []struct {
+		in       *v3x.APIError
+		contains string
+	}{
+		{&v3x.APIError{Status: http.StatusTooManyRequests, Code: "Too Many Requests"}, "limite les appels"},
+		{&v3x.APIError{Status: http.StatusBadGateway, Code: "<!DOCTYPE html><html><head><title>502</title>"}, "ne répond pas pour l'instant (HTTP 502)"},
+		{&v3x.APIError{Status: http.StatusServiceUnavailable, Code: "internal"}, "ne répond pas"},
+		{&v3x.APIError{Status: http.StatusBadRequest, Code: "validation"}, "validation"},
+	} {
+		w := httptest.NewRecorder()
+		apiFail(w, tc.in)
+		if w.Code != tc.in.Status {
+			t.Fatalf("%v : code %d, attendu %d", tc.in, w.Code, tc.in.Status)
+		}
+		var body map[string]string
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(body["error"], tc.contains) || strings.Contains(body["error"], "<") {
+			t.Fatalf("%v : message %q, attendu %q", tc.in, body["error"], tc.contains)
+		}
+	}
+}
