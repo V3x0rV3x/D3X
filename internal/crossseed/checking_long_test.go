@@ -52,3 +52,37 @@ func TestStepLongChecking(t *testing.T) {
 		t.Fatalf("fin de retenue : %v %v", st, ok)
 	}
 }
+
+// Client simulé qui sait passer un torrent en gestion automatique.
+type autoClient struct {
+	stepClient
+	auto []string
+}
+
+func (a *autoClient) AutoManage(_ context.Context, t client.Torrent) (bool, error) {
+	a.auto = append(a.auto, t.Hash)
+	return true, nil
+}
+
+// Réglage « gestion automatique » (YataReborn, 21/11/26) : demandée au client
+// au démarrage du seed d'un torrent vérifié à 100 %, et seulement si le
+// réglage est allumé.
+func TestStepAutoManage(t *testing.T) {
+	isolatedConfig(t)
+	const h = "89abcdef0123456789abcdef0123456789abcdef"
+	ctx := context.Background()
+	done := map[string]client.Torrent{h: {Hash: h, Progress: 1, Stopped: true, Category: "tv", SavePath: "/data/tv"}}
+	for _, on := range []bool{false, true} {
+		e := &Engine{rows: map[string]*Row{}, watches: map[string]*watch{}, final: map[string]WatchState{}, autoTMM: on}
+		e.watches[h] = &watch{Key: "k", Name: "Release.Y", Client: "c1", InfoHash: h, Status: StChecking, Since: time.Now().Add(-10 * time.Minute)}
+		q := &autoClient{}
+		e.step(ctx, q, h, done)
+		want := 0
+		if on {
+			want = 1
+		}
+		if q.starts != 1 || len(q.auto) != want {
+			t.Fatalf("réglage %v : démarrages %d, gestion automatique %v", on, q.starts, q.auto)
+		}
+	}
+}

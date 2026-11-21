@@ -201,9 +201,11 @@ func run(port int, window bool) error {
 	_ = config.WriteFileAtomic("session", []byte(strconv.Itoa(port)+" "+token))
 
 	srv := server.New(version, cfg, token, port)
-	// Liens externes de la page : dans le navigateur par défaut, pas dans la
-	// fenêtre d'application de D3X.
-	srv.SetOpener(desktop.OpenDefault)
+	// Liens externes de la page : dans le navigateur du membre (réglage
+	// « Ouvrir les liens avec », sinon celui par défaut), pas dans la fenêtre
+	// d'application de D3X.
+	openURL := func(u string) error { return desktop.OpenWith(srv.Browser(), u) }
+	srv.SetOpener(openURL)
 	if pub, err := update.PublicKey(signingKey); err == nil {
 		srv.SetUpdateKey(pub)
 	}
@@ -248,7 +250,7 @@ func run(port int, window bool) error {
 		if !desktop.HasTray {
 			fmt.Println("Ouvre ce lien dans ton navigateur :", url)
 		}
-		_ = desktop.OpenDefault(url)
+		_ = openURL(url)
 		return nil
 	}
 	// openApp : « Ouvrir D3X » (clic sur l'icône, menu) ne donne jamais deux
@@ -405,9 +407,9 @@ func run(port int, window bool) error {
 		// même lien à jeton que la fenêtre), dans le navigateur habituel.
 		// L'adresse seule (http://localhost:8733/) n'a pas de session.
 		browser := func() {
-			log.Println("ouverture de la page dans le navigateur par défaut")
-			if err := desktop.OpenDefault(url); err != nil {
-				log.Println("navigateur par défaut :", err)
+			log.Println("ouverture de la page dans le navigateur")
+			if err := openURL(url); err != nil {
+				log.Println("navigateur :", err)
 			}
 		}
 		desktop.Tray(func() {}, openApp, browser, func() {

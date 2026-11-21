@@ -86,3 +86,45 @@ func TestTrackerHosts(t *testing.T) {
 		t.Errorf("hôtes : %v", h)
 	}
 }
+
+// Dossier d'une catégorie en gestion automatique : le sien (complet ou relatif
+// au dossier par défaut), sinon le dossier par défaut suivi de son nom.
+func TestCategoryPath(t *testing.T) {
+	var auto string
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			io.WriteString(w, "Ok.")
+		case "/api/v2/app/version":
+			io.WriteString(w, "v5.1.0")
+		case "/api/v2/app/webapiVersion":
+			io.WriteString(w, "2.11.2")
+		case "/api/v2/torrents/categories":
+			io.WriteString(w, `{"films":{"name":"films","savePath":"D:\\Films"},"tv":{"name":"tv","savePath":""},"anime/vf":{"name":"anime/vf","savePath":"Animes"}}`)
+		case "/api/v2/app/preferences":
+			io.WriteString(w, `{"save_path":"C:\\Telechargements\\"}`)
+		case "/api/v2/torrents/setAutoManagement":
+			r.ParseForm()
+			auto = r.Form.Get("hashes") + "=" + r.Form.Get("enable")
+		}
+	}))
+	defer s.Close()
+	c, _ := New(Options{URL: s.URL})
+	ctx := context.Background()
+	for name, want := range map[string]string{
+		"films":    `D:\Films`,
+		"tv":       `C:\Telechargements\tv`,
+		"anime/vf": `C:\Telechargements\Animes`,
+		"absente":  "",
+	} {
+		if got, err := c.CategoryPath(ctx, name); err != nil || got != want {
+			t.Errorf("%s : %q (%v), attendu %q", name, got, err, want)
+		}
+	}
+	if err := c.SetAutoManagement(ctx, true, "abc"); err != nil || auto != "abc=true" {
+		t.Errorf("gestion automatique : %q (%v)", auto, err)
+	}
+	if joinClientPath("/data/torrents/", "anime/vf") != "/data/torrents/anime/vf" {
+		t.Error("chemin Linux")
+	}
+}

@@ -246,6 +246,9 @@ type Engine struct {
 	// Publications vérifiées gardées à l'arrêt jusqu'à ce moment (option
 	// « Démarrer le seed à la fin du lot », voir HoldPublished).
 	holdPub time.Time
+	// autoTMM : le réglage « gestion automatique » de qBittorrent (voir
+	// config.AutoTMM), relu à chaque tour de surveillance.
+	autoTMM bool
 }
 
 // New crée le moteur et reprend la surveillance des ajouts en cours.

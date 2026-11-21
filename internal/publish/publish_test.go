@@ -395,6 +395,26 @@ func TestPick(t *testing.T) {
 	}
 }
 
+// Client sur ce PC, même disque Windows : le dossier choisi est gardé tel
+// quel, même si un autre dossier a les mêmes noms (Encrypted_Shards, 21/11).
+func TestPlaceSameMachineWindows(t *testing.T) {
+	parent := `C:\Serveur\Torrents\.cross-seed\TrackerB`
+	list := []client.Torrent{{ContentPath: `C:\Serveur\Torrents\TrackerA\Film.A`}}
+	names := []string{"Film.A"}
+	if p := place(crossseed.Target{ID: "q", Host: "127.0.0.1"}, list, parent, names, true); p.dir != parent || p.guess != nil {
+		t.Fatalf("même PC : dossier %q, règle %+v", p.dir, p.guess)
+	}
+	// Client ailleurs : la traduction devinée reste proposée.
+	if p := place(crossseed.Target{ID: "q", Host: "box"}, list, parent, names, false); p.dir != `C:\Serveur\Torrents\TrackerA` || p.guess == nil {
+		t.Fatalf("autre machine : dossier %q, règle %+v", p.dir, p.guess)
+	}
+	// Même PC, lecteur réseau que le client voit par son partage : deviné.
+	unc := []client.Torrent{{ContentPath: `\\NAS\Films\Film.A`}}
+	if p := place(crossseed.Target{ID: "q", Host: "127.0.0.1"}, unc, `Z:\Films`, names, true); p.dir != `\\NAS\Films` || p.guess == nil {
+		t.Fatalf("lecteur réseau : dossier %q, règle %+v", p.dir, p.guess)
+	}
+}
+
 func wait(t *testing.T, ok func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(30 * time.Second)

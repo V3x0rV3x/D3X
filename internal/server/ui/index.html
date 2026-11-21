@@ -605,6 +605,8 @@
         <div><label for="f-pubtag">Étiquette de tes publications</label><input id="f-pubtag" type="text" autocomplete="off" placeholder="la même"></div>
       </div>
       <p class="hint">Pour ranger à part ce que tu publies avec Publier et le Lot. Vide : la catégorie ou l'étiquette ci-dessus.</p>
+      <label class="check"><input id="f-autotmm" type="checkbox"> Gestion automatique de qBittorrent quand c'est possible</label>
+      <p class="hint">Un torrent ajouté dans le dossier même de sa catégorie passe en gestion automatique une fois vérifié à 100 % : il suit ensuite la catégorie, comme un téléchargement ordinaire (déplacements compris). Rangé ailleurs, il reste en gestion manuelle : en gestion automatique, qBittorrent déplacerait ses fichiers vers le dossier de la catégorie.</p>
       <label for="f-skiptags">Étiquettes à ne jamais publier</label>
       <input id="f-skiptags" type="text" autocomplete="off" spellcheck="false" placeholder="aucune">
       <p class="hint">Une release dont un torrent de ton client porte l'une de ces étiquettes (<code>noHL</code>, par exemple) n'est jamais publiée par le Lot, même si d'autres torrents sans étiquette seedent les mêmes fichiers. Plusieurs : sépare-les par des virgules.</p>
@@ -615,6 +617,11 @@
       <input id="f-discogs" type="password" autocomplete="off" spellcheck="false">
       <label class="check small hidden" id="f-discogs-clear-l"><input id="f-discogs-clear" type="checkbox"> Retirer le jeton Discogs</label>
       <p class="hint">Pour chercher la pochette d'un album sur Discogs quand MusicBrainz n'en a pas (Publier ▸ Album ▸ « Pochette Discogs »). Le jeton se crée sur discogs.com ▸ Paramètres ▸ Développeurs ; il reste sur cette machine.</p>
+      <div id="f-browser-row" class="hidden">
+        <label for="f-browser">Ouvrir les liens avec</label>
+        <input id="f-browser" type="text" autocomplete="off" spellcheck="false" placeholder="le navigateur par défaut">
+        <p class="hint">Pour les fiches V3X et « Ouvrir dans le navigateur », dans un autre navigateur ou un profil à part. Le chemin complet du programme (entre guillemets s'il contient des espaces), puis ses arguments ; D3X ajoute l'adresse à la fin. Exemple : <code>"C:\Program Files\Mozilla Firefox\firefox.exe" -P p2p</code>. Vide : le navigateur par défaut.</p>
+      </div>
       <label class="check"><input id="f-updates" type="checkbox"> Prévenir quand une nouvelle version de D3X sort</label>
     </fieldset>
     <div class="dialog-actions">

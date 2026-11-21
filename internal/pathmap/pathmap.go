@@ -130,6 +130,15 @@ func SuggestNames(localDir string, entryNames []string, clientPaths []string) (R
 		}
 		votes[parent]++
 	}
+	// Le client range déjà des torrents dans ce dossier, sous ce même chemin :
+	// il le voit tel quel. Un autre dossier aux mêmes noms ne l'emporte pas,
+	// même plus fourni (cross-seed : « .cross-seed\TrackerB » reprend les
+	// releases de « TrackerA »).
+	for p, v := range votes {
+		if strings.EqualFold(names.FromDisk(norm(p)), names.FromDisk(norm(localDir))) {
+			return Rule{}, v
+		}
+	}
 	var best string
 	for p, v := range votes {
 		if v > votes[best] || (v == votes[best] && p < best) {

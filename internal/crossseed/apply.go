@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 	"time"
@@ -231,6 +232,9 @@ func (e *Engine) watchLoop() {
 		if err != nil {
 			continue
 		}
+		e.mu.Lock()
+		e.autoTMM = env.Cfg != nil && env.Cfg.AutoTMM
+		e.mu.Unlock()
 		for id, hashes := range byClient {
 			t := env.Get(id)
 			if t == nil && id != "" && env.Cfg != nil && env.Cfg.Client(id) == nil {
@@ -342,6 +346,7 @@ func (e *Engine) step(ctx context.Context, q client.Client, h string, byHash map
 			set(StChecking, "vérifié à 100 %, démarrage refusé : "+err.Error())
 			return
 		}
+		e.autoManage(ctx, q, t)
 		set(StSeeding, "")
 		journal.Add(journal.Event{Kind: "crossseed", Name: w.Name, InfoHash: h, ID: w.ID, Detail: "vérifié à 100 %, en seed"})
 		e.forget(h)
@@ -447,6 +452,24 @@ var (
 
 // Recheck relance la vérification d'un ajout marqué en échec (bouton
 // « Revérifier ») : il repasse sous surveillance et démarrera à 100 %.
+// autoManage : réglage « gestion automatique » allumé, un torrent vérifié à
+// 100 % et rangé dans le dossier même de sa catégorie passe en gestion
+// automatique de qBittorrent (YataReborn, 21/11/26). Les données sont
+// complètes là où elles sont : rien ne bouge. Un refus du client ne change
+// rien au seed, il est seulement noté dans le journal technique.
+func (e *Engine) autoManage(ctx context.Context, q client.Client, t client.Torrent) {
+	e.mu.Lock()
+	on := e.autoTMM
+	e.mu.Unlock()
+	am, ok := q.(client.AutoManager)
+	if !on || !ok {
+		return
+	}
+	if _, err := am.AutoManage(ctx, t); err != nil {
+		log.Printf("gestion automatique de %s refusée par le client : %v", t.Name, err)
+	}
+}
+
 func (e *Engine) Recheck(key string) error {
 	e.mu.Lock()
 	var hash, cid string

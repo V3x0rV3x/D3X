@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -401,6 +402,68 @@ func (c *Client) Start(ctx context.Context, hashes ...string) error {
 		path = "/api/v2/torrents/start"
 	}
 	return c.post(ctx, path, url.Values{"hashes": {strings.Join(hashes, "|")}})
+}
+
+// SetAutoManagement active ou coupe la gestion automatique de torrents.
+func (c *Client) SetAutoManagement(ctx context.Context, enable bool, hashes ...string) error {
+	return c.post(ctx, "/api/v2/torrents/setAutoManagement", url.Values{
+		"hashes": {strings.Join(hashes, "|")},
+		"enable": {strconv.FormatBool(enable)},
+	})
+}
+
+// CategoryPath : le dossier où qBittorrent range, en gestion automatique, un
+// torrent de la catégorie name : celui de la catégorie, sinon le dossier par
+// défaut suivi du nom de la catégorie. Un dossier relatif part du dossier par
+// défaut. "" si la catégorie n'existe pas.
+func (c *Client) CategoryPath(ctx context.Context, name string) (string, error) {
+	b, err := c.call(ctx, http.MethodGet, "/api/v2/torrents/categories", nil, nil, "")
+	if err != nil {
+		return "", err
+	}
+	var cats map[string]struct {
+		SavePath string `json:"savePath"`
+	}
+	if err := json.Unmarshal(b, &cats); err != nil {
+		return "", fmt.Errorf("catégories de qBittorrent illisibles : %w", err)
+	}
+	cat, ok := cats[name]
+	if !ok {
+		return "", nil
+	}
+	dir := strings.TrimSpace(cat.SavePath)
+	if absClientPath(dir) {
+		return dir, nil
+	}
+	b, err = c.call(ctx, http.MethodGet, "/api/v2/app/preferences", nil, nil, "")
+	if err != nil {
+		return "", err
+	}
+	var pref struct {
+		SavePath string `json:"save_path"`
+	}
+	if err := json.Unmarshal(b, &pref); err != nil || strings.TrimSpace(pref.SavePath) == "" {
+		return "", errors.New("dossier par défaut de qBittorrent illisible")
+	}
+	if dir == "" {
+		dir = name
+	}
+	return joinClientPath(pref.SavePath, dir), nil
+}
+
+// absClientPath : chemin complet, à la manière de Linux ou de Windows.
+func absClientPath(p string) bool {
+	return strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\\`) || (len(p) >= 2 && p[1] == ':')
+}
+
+// joinClientPath ajoute rel à base, avec le séparateur de base.
+func joinClientPath(base, rel string) string {
+	sep := "/"
+	if strings.Contains(base, `\`) || (len(base) >= 2 && base[1] == ':') {
+		sep = `\`
+		rel = strings.ReplaceAll(rel, "/", `\`)
+	}
+	return strings.TrimRight(base, `/\`) + sep + strings.Trim(rel, `/\`)
 }
 
 // Stop arrête des torrents (stop en 5.x, pause avant).

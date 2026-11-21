@@ -448,7 +448,7 @@ func (m *Manager) SetClient(id, clientID string) error {
 	if !pathmap.Covers(parent, t.PathMap) {
 		list, _ = t.Client.List(ctx, nil)
 	}
-	pl := place(*t, list, parent, src.Names(ctx, parent))
+	pl := place(*t, list, parent, src.Names(ctx, parent), onMachine(src, t.Host))
 	m.mu.Lock()
 	j.setPlace(pl, env.Cfg)
 	m.mu.Unlock()
@@ -565,8 +565,9 @@ func (j *Job) setPlace(p placement, cfg *config.Config) {
 
 // place : où le client t voit le dossier parent. Règle enregistrée, sinon
 // devinée d'après les torrents qu'il a déjà dans ce dossier (list), sinon le
-// même chemin. votes : torrents du client rangés dans ce dossier.
-func place(t crossseed.Target, list []client.Torrent, parent string, names []string) placement {
+// même chemin. votes : torrents du client rangés dans ce dossier. local : le
+// client tourne sur la machine des fichiers.
+func place(t crossseed.Target, list []client.Torrent, parent string, names []string, local bool) placement {
 	p := placement{t: t, dir: parent}
 	if pathmap.Covers(parent, t.PathMap) {
 		p.dir = pathmap.ToClient(parent, t.PathMap)
@@ -581,12 +582,30 @@ func place(t crossseed.Target, list []client.Torrent, parent string, names []str
 	}
 	if rule, n := pathmap.SuggestNames(parent, names, paths); n > 0 {
 		p.votes = n
-		if rule.To != "" {
+		// Client sur ce PC et même lecteur Windows des deux côtés : il voit ce
+		// dossier tel quel, rien à traduire. Un autre dossier du même disque
+		// aux mêmes noms n'est qu'une autre copie (cross-seed, Encrypted_Shards
+		// 21/11). Un lecteur réseau vu autrement par le client reste deviné.
+		if rule.To != "" && !(local && winVolume(parent) != "" && winVolume(parent) == winVolume(rule.To)) {
 			p.guess = &rule
 			p.dir = rule.To
 		}
 	}
 	return p
+}
+
+// winVolume : le lecteur (« c: ») ou le partage (« \\nas\films ») d'un chemin
+// Windows, en minuscules ; "" pour un autre chemin.
+func winVolume(p string) string {
+	if len(p) >= 2 && p[1] == ':' {
+		return strings.ToLower(p[:2])
+	}
+	if strings.HasPrefix(p, `\\`) {
+		if parts := strings.SplitN(p[2:], `\`, 3); len(parts) >= 2 && parts[0] != "" && parts[1] != "" {
+			return strings.ToLower(`\\` + parts[0] + `\` + parts[1])
+		}
+	}
+	return ""
 }
 
 // pick choisit le client qui seedera une release du dossier parent : celui
@@ -597,14 +616,14 @@ func place(t crossseed.Target, list []client.Torrent, parent string, names []str
 func pick(ctx context.Context, env *crossseed.Env, src source.Source, parent string) placement {
 	for _, t := range env.Targets {
 		if pathmap.Covers(parent, t.PathMap) {
-			return place(t, nil, parent, nil)
+			return place(t, nil, parent, nil, false)
 		}
 	}
 	lists, _ := crossseed.ListAll(ctx, env)
 	names := src.Names(ctx, parent)
 	var best *placement
 	for _, l := range lists {
-		p := place(l.Target, l.List, parent, names)
+		p := place(l.Target, l.List, parent, names, onMachine(src, l.Target.Host))
 		if p.votes > 0 && (best == nil || p.votes > best.votes) {
 			best = &p
 		}
@@ -614,10 +633,10 @@ func pick(ctx context.Context, env *crossseed.Env, src source.Source, parent str
 	}
 	for _, t := range env.Targets {
 		if onMachine(src, t.Host) {
-			return place(t, nil, parent, nil)
+			return place(t, nil, parent, nil, false)
 		}
 	}
-	return place(env.Targets[0], nil, parent, nil)
+	return place(env.Targets[0], nil, parent, nil, false)
 }
 
 // onMachine : le client d'hôte host tourne-t-il là où sont les fichiers ?

@@ -424,3 +424,20 @@ func TestTagList(t *testing.T) {
 		t.Fatalf("nil : %q", got)
 	}
 }
+
+func TestSamePath(t *testing.T) {
+	for _, c := range []struct {
+		a, b string
+		same bool
+	}{
+		{`C:\Telechargements\tv`, `c:/telechargements/TV/`, true},
+		{"/data/tv", "/data/tv/", true},
+		{"/data/tv", "/data/TV", false},
+		{`C:\Telechargements\tv`, `C:\Telechargements\tv.cross`, false},
+		{"", "/data", false},
+	} {
+		if SamePath(c.a, c.b) != c.same {
+			t.Errorf("%q / %q : attendu %v", c.a, c.b, c.same)
+		}
+	}
+}

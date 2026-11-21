@@ -87,6 +87,39 @@ func (q *qbitClient) Add(ctx context.Context, name string, raw []byte, o AddOpti
 	return err
 }
 
+// AutoManage passe en gestion automatique un torrent rangé dans le dossier
+// même de sa catégorie (YataReborn, 21/11/26) : il suivra la catégorie, comme
+// un téléchargement ordinaire. Rangé ailleurs, il reste en gestion manuelle :
+// la gestion automatique le déplacerait vers le dossier de la catégorie.
+func (q *qbitClient) AutoManage(ctx context.Context, t Torrent) (bool, error) {
+	if t.Category == "" || t.SavePath == "" {
+		return false, nil
+	}
+	dir, err := q.c.CategoryPath(ctx, t.Category)
+	if err != nil || dir == "" || !SamePath(dir, t.SavePath) {
+		return false, err
+	}
+	return true, q.c.SetAutoManagement(ctx, true, t.Hash)
+}
+
+// SamePath : deux chemins du client désignent-ils le même dossier ? « / » et
+// « \ » se valent, le séparateur final ne compte pas, et un chemin Windows se
+// compare sans la casse.
+func SamePath(a, b string) bool {
+	n := func(p string) string {
+		return strings.TrimRight(strings.ReplaceAll(strings.TrimSpace(p), `\`, "/"), "/")
+	}
+	na, nb := n(a), n(b)
+	if na == "" || nb == "" {
+		return false
+	}
+	win := strings.Contains(a, `\`) || (len(a) >= 2 && a[1] == ':')
+	if win {
+		return strings.EqualFold(na, nb)
+	}
+	return na == nb
+}
+
 func (q *qbitClient) Recheck(ctx context.Context, h string) error { return q.c.Recheck(ctx, h) }
 func (q *qbitClient) Start(ctx context.Context, h string) error   { return q.c.Start(ctx, h) }
 func (q *qbitClient) Stop(ctx context.Context, h string) error    { return q.c.Stop(ctx, h) }

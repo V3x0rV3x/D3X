@@ -398,6 +398,8 @@ type stateOut struct {
 	Category     string      `json:"category"`
 	PubCategory  string      `json:"pubCategory"`
 	PubTag       string      `json:"pubTag"`
+	AutoTMM      bool        `json:"autoTMM"`   // gestion automatique de qBittorrent dans le dossier de la catégorie
+	Browser      string      `json:"browser"`   // commande « Ouvrir les liens avec » ("" = navigateur par défaut)
 	SkipTags     []string    `json:"skipTags"`  // étiquettes à ne jamais publier (Lot)
 	HashLimit    int         `json:"hashLimit"` // Mo/s, 0 = sans limite
 	Discogs      bool        `json:"discogs"`   // jeton Discogs enregistré
@@ -460,6 +462,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	o.Clients = s.clientsOut()
 	o.Category, o.Tag, o.CheckUpdates = s.cfg.Category, s.cfg.Tag, s.cfg.CheckUpdates
 	o.PubCategory, o.PubTag = s.cfg.PubCategory, s.cfg.PubTag
+	o.AutoTMM, o.Browser = s.cfg.AutoTMM, s.cfg.Browser
 	o.SkipTags = append([]string{}, s.cfg.SkipTags...)
 	o.HashLimit = s.cfg.HashLimitMB
 	o.Discogs = s.cfg.DiscogsToken != ""
@@ -514,6 +517,9 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 		Category    string `json:"category"`
 		PubCategory string `json:"pubCategory"`
 		PubTag      string `json:"pubTag"`
+		// AutoTMM, Browser : absents = inchangés.
+		AutoTMM *bool   `json:"autoTMM"`
+		Browser *string `json:"browser"`
 		// SkipTags : saisie « a, b » ; absent = inchangé.
 		SkipTags *string `json:"skipTags"`
 		// HashLimit : Mo/s ; absent = inchangé.
@@ -574,6 +580,20 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 	c.Category = strings.TrimSpace(in.Category)
 	c.PubCategory = strings.TrimSpace(in.PubCategory)
 	c.PubTag = strings.TrimSpace(in.PubTag)
+	if in.AutoTMM != nil {
+		c.AutoTMM = *in.AutoTMM
+	}
+	// La commande des liens ne sert qu'à une page locale (mode serveur :
+	// rien ne s'ouvre sur la machine de D3X).
+	if in.Browser != nil && !s.opts.Remote {
+		b := strings.TrimSpace(*in.Browser)
+		if err := desktop.CheckBrowser(b); err != nil {
+			s.mu.Unlock()
+			fail(w, http.StatusBadRequest, err)
+			return
+		}
+		c.Browser = b
+	}
 	if in.SkipTags != nil {
 		c.SkipTags = config.ParseSkipTags(*in.SkipTags)
 	}

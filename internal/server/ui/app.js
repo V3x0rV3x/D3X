@@ -451,6 +451,9 @@ function fillSettings() {
   $("#f-cat").value = s.category || "";
   $("#f-pubcat").value = s.pubCategory || "";
   $("#f-pubtag").value = s.pubTag || "";
+  $("#f-autotmm").checked = !!s.autoTMM;
+  $("#f-browser").value = s.browser || "";
+  $("#f-browser-row").classList.toggle("hidden", !s.openLinks);
   $("#f-skiptags").value = (s.skipTags || []).join(", ");
   $("#f-hashlimit").value = s.hashLimit ? String(s.hashLimit) : "";
   $("#f-discogs").value = "";
@@ -906,6 +909,8 @@ async function saveSettings(ev) {
       category: $("#f-cat").value,
       pubCategory: $("#f-pubcat").value,
       pubTag: $("#f-pubtag").value,
+      autoTMM: $("#f-autotmm").checked,
+      browser: $("#f-browser").value,
       skipTags: $("#f-skiptags").value,
       hashLimit: Math.max(0, Math.round(Number($("#f-hashlimit").value) || 0)),
       discogsToken: $("#f-discogs").value.trim(),

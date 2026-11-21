@@ -45,6 +45,13 @@ type Torrent struct {
 }
 
 // AddOptions règle un ajout (toujours à l'arrêt).
+// AutoManager : un client qui sait passer un torrent en gestion automatique
+// (qBittorrent). AutoManage ne le fait que pour un torrent rangé dans le
+// dossier même de sa catégorie, et dit s'il l'a fait.
+type AutoManager interface {
+	AutoManage(ctx context.Context, t Torrent) (bool, error)
+}
+
 type AddOptions struct {
 	SavePath string // dossier qui contient la release, vu par le client
 	Category string

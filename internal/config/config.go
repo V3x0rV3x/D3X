@@ -44,6 +44,16 @@ type Config struct {
 	PubCategory string `json:"pubCategory,omitempty"`
 	// Étiquette des publications, de même (Encrypted_Shards). Vide = Tag.
 	PubTag string `json:"pubTag,omitempty"`
+	// AutoTMM : un torrent ajouté par D3X dans le dossier même de sa
+	// catégorie passe en gestion automatique de qBittorrent une fois vérifié
+	// à 100 % : il suit alors la catégorie, comme un téléchargement ordinaire
+	// (YataReborn, 21/11/26). Rangé ailleurs, il reste en gestion manuelle.
+	AutoTMM bool `json:"autoTMM,omitempty"`
+	// Browser : la commande qui ouvre les liens de D3X (fiches V3X, « Ouvrir
+	// dans le navigateur ») : programme (chemin complet) puis arguments,
+	// l'adresse est ajoutée à la fin. Par exemple un profil Firefox à part.
+	// Vide = le navigateur par défaut (YataReborn, 21/11/26).
+	Browser string `json:"browser,omitempty"`
 	// SkipTags : étiquettes de torrents (noHL…) dont les releases ne sont
 	// jamais publiées par le Lot : une release couverte par un torrent qui
 	// porte l'une d'elles, dans n'importe quel client, est écartée, même si

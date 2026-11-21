@@ -16,6 +16,14 @@ func (s *Server) SetOpener(open func(string) error) {
 	s.mu.Unlock()
 }
 
+// Browser : la commande du réglage « Ouvrir les liens avec » ("" = le
+// navigateur par défaut).
+func (s *Server) Browser() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cfg.Browser
+}
+
 // openLink : un lien externe cliqué dans la fenêtre de D3X (Edge ou Chrome en
 // mode application, avec un profil à part) s'ouvrait dans ce navigateur-là, et
 // non dans celui du membre (AntoineAngel, 2/11/26). La page le confie ici, et

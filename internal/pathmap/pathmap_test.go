@@ -64,6 +64,26 @@ func TestSuggest(t *testing.T) {
 	}
 }
 
+// Dossier de cross-seed : le client a les mêmes releases dans un autre dossier,
+// plus fourni, et quelques-unes dans celui-ci. Il voit ce dossier tel quel.
+func TestSuggestNamesPrefersSameFolder(t *testing.T) {
+	local := `C:\Serveur\Torrents\.cross-seed\TrackerB`
+	entries := []string{"Film.A", "Film.B", "Film.C"}
+	client := []string{
+		`C:\Serveur\Torrents\TrackerA\Film.A`,
+		`C:\Serveur\Torrents\TrackerA\Film.B`,
+		`C:\Serveur\Torrents\TrackerA\Film.C`,
+		`c:\serveur\torrents\.cross-seed\TrackerB\Film.A`,
+	}
+	if r, n := SuggestNames(local, entries, client); r.To != "" || n != 1 {
+		t.Fatalf("dossier de cross-seed : %+v (%d)", r, n)
+	}
+	// Sans torrent du client dans ce dossier : l'autre dossier reste deviné.
+	if r, n := SuggestNames(local, entries, client[:3]); r.To != `C:\Serveur\Torrents\TrackerA` || n != 3 {
+		t.Fatalf("sans torrent ici : %+v (%d)", r, n)
+	}
+}
+
 func TestCovers(t *testing.T) {
 	rules := []Rule{{From: `\\NAS\data`, To: "/data"}, {From: "/home/moi", To: ""}}
 	for p, want := range map[string]bool{
