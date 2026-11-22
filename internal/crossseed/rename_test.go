@@ -229,6 +229,115 @@ func TestRenamedApply(t *testing.T) {
 	}
 }
 
+func TestWrappedRoot(t *testing.T) {
+	// Fichier seul rangé dans un dossier en plus (Terminator 3 QTZ, YataReborn).
+	if r := wrappedRoot([]client.Rename{{From: "Le Soulèvement des Machines (2003)/T3.mkv", To: "T3.mkv"}}); r != "Le Soulèvement des Machines (2003)" {
+		t.Fatalf("fichier seul : %q", r)
+	}
+	if r := wrappedRoot([]client.Rename{{From: "D/Copie/a.mkv", To: "Copie/a.mkv"}, {From: "D/Copie/a.nfo", To: "Copie/a.nfo"}}); r != "D" {
+		t.Fatalf("dossier : %q", r)
+	}
+	for _, p := range [][]client.Rename{
+		{{From: "D/a.mkv", To: "b.mkv"}},                                 // nom changé
+		{{From: "a.mkv", To: "a.mkv"}},                                   // pas de racine
+		{{From: "D/a.mkv", To: "a.mkv"}, {From: "E/b.mkv", To: "b.mkv"}}, // deux racines
+		{{From: "D/Copie/a.mkv", To: "Autre/a.mkv"}},                     // dossier renommé
+	} {
+		if r := wrappedRoot(p); r != "" {
+			t.Fatalf("%+v : %q", p, r)
+		}
+	}
+}
+
+// La fiche V3X range seulement ta copie dans un dossier en plus : D3X
+// l'ajoute à qBittorrent sans ce dossier, sans aucun renommage.
+func TestWrappedRootApply(t *testing.T) {
+	isolatedConfig(t)
+
+	mine := map[string]int64{"film.mkv": 2_000_000_000, "film.nfo": 3_000}
+	copyRaw := mkTorrent("Ma Copie", mine, "https://autre.invalid/announce", "AUTRE")
+	v3xRaw := mkTorrent("Dossier En Plus", map[string]int64{"Ma Copie/film.mkv": 2_000_000_000, "Ma Copie/film.nfo": 3_000}, "https://announce.v3x.club/pk/announce", "")
+	pv, _ := torrent.Parse(v3xRaw)
+	pc, _ := torrent.Parse(copyRaw)
+	hc := strings.ToLower(pc.InfoHash)
+
+	fq := &fakeQbit{list: map[string]*fakeTorrent{}, complete: map[string]float64{}, disk: map[string]int64{
+		"/data/autre/Ma Copie/film.mkv": 2_000_000_000, "/data/autre/Ma Copie/film.nfo": 3_000,
+	}}
+	fq.list[hc] = &fakeTorrent{Torrent: qbit.Torrent{
+		Hash: hc, Name: pc.Name, SavePath: "/data/autre", ContentPath: "/data/autre/Ma Copie", Progress: 1, State: "stalledUP",
+		Size: pc.Total, TotalSize: pc.Total, MagnetURI: "magnet:?xt=urn:btih:" + hc + "&tr=https%3A%2F%2Fautre.invalid%2Fannounce",
+	}, raw: copyRaw}
+	qs := httptest.NewServer(fq.handler(t))
+	defer qs.Close()
+	const id = "66666666-6666-6666-6666-666666666666"
+	vs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/me":
+			io.WriteString(w, `{"username":"test","ratio":2.5,"hitAndRun":0}`)
+		case "/api/d3x/match":
+			var in struct{ Items []v3x.MatchItem }
+			json.NewDecoder(r.Body).Decode(&in)
+			type res struct {
+				Key   string     `json:"key"`
+				Match *v3x.Match `json:"match"`
+			}
+			var out []res
+			for _, it := range in.Items {
+				var m *v3x.Match
+				if it.SizeHash == pv.SizeHash {
+					m = &v3x.Match{Kind: "renamed", ID: id, Name: pv.Name, InfoHash: pv.InfoHash, Seeders: 1, Size: pv.Total}
+				}
+				out = append(out, res{Key: it.Key, Match: m})
+			}
+			json.NewEncoder(w).Encode(map[string]interface{}{"results": out})
+		case "/torznab/download":
+			w.Write(v3xRaw)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer vs.Close()
+
+	q, _ := client.New(client.Options{URL: qs.URL, User: "admin", Pass: "secret"})
+	e := New(oneClient(q, v3x.New(vs.URL, "cle", "D3X/test"), config.Defaults()))
+	if err := e.StartScan(); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return !e.Scanning() })
+	var keys []string
+	for _, r := range e.Rows() {
+		if r.Status == StRenamed {
+			keys = append(keys, r.Key)
+		}
+	}
+	if len(keys) != 1 {
+		t.Fatalf("%d lignes « noms différents », 1 attendue", len(keys))
+	}
+	if n, err := e.Apply(keys); err != nil || n != 1 {
+		t.Fatalf("%d %v", n, err)
+	}
+	h := strings.ToLower(pv.InfoHash)
+	waitFor(t, func() bool { st, ok := e.WatchOf(h); return ok && st.Status == StSeeding })
+
+	fq.mu.Lock()
+	defer fq.mu.Unlock()
+	if len(fq.renames) != 0 {
+		t.Fatalf("renommages : %v", fq.renames)
+	}
+	last := fq.adds[len(fq.adds)-1]
+	if last["contentLayout"] != "NoSubfolder" || last["root_folder"] != "false" || last["savepath"] != "/data/autre" {
+		t.Fatalf("ajout : %v", last)
+	}
+	got := map[string]bool{}
+	for _, n := range fq.names[h] {
+		got[n] = true
+	}
+	if !got["Ma Copie/film.mkv"] || !got["Ma Copie/film.nfo"] {
+		t.Fatalf("noms dans le client : %v", fq.names[h])
+	}
+}
+
 // Renommer serait risqué (la racine V3X est l'emplacement d'un autre
 // torrent) : avec les liens physiques choisis, la release va dans le dossier
 // des liens, ses fichiers liés à ceux de ta copie, sans renommage.

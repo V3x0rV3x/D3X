@@ -333,6 +333,9 @@ type AddOptions struct {
 	Category string
 	Tags     string
 	Stopped  bool
+	// NoSubfolder : sans le dossier racine du .torrent (disposition « Ne pas
+	// créer de sous-dossier ») ; sinon disposition d'origine.
+	NoSubfolder bool
 }
 
 // ErrAlreadyThere : qBittorrent a refusé l'ajout, ce torrent y est déjà.
@@ -347,6 +350,10 @@ var ErrAlreadyThere = errors.New("qBittorrent a refusé le .torrent : il est dé
 // condition d'arrêt. Les versions anciennes ignorent les champs qu'elles ne
 // connaissent pas.
 func (c *Client) Add(ctx context.Context, name string, data []byte, o AddOptions) error {
+	layout, rootFolder := "Original", "true"
+	if o.NoSubfolder {
+		layout, rootFolder = "NoSubfolder", "false"
+	}
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
 	fw, _ := w.CreateFormFile("torrents", name)
@@ -358,8 +365,8 @@ func (c *Client) Add(ctx context.Context, name string, data []byte, o AddOptions
 		{"autoTMM", "false"},
 		// Jamais le dossier des torrents incomplets : les données sont déjà là.
 		{"useDownloadPath", "false"},
-		{"contentLayout", "Original"},
-		{"root_folder", "true"}, // équivalent avant 4.3.2
+		{"contentLayout", layout},
+		{"root_folder", rootFolder}, // équivalent avant 4.3.2
 		{"stopCondition", "None"},
 		{"skip_checking", "false"},
 		{"paused", fmt.Sprint(o.Stopped)},

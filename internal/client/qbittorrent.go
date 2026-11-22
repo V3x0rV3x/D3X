@@ -79,8 +79,10 @@ func (q *qbitClient) Files(ctx context.Context, hash string) ([]torrent.File, in
 	return out, total, nil
 }
 
+func (q *qbitClient) CanStripRoot() bool { return true }
+
 func (q *qbitClient) Add(ctx context.Context, name string, raw []byte, o AddOptions) error {
-	err := q.c.Add(ctx, name, raw, qbit.AddOptions{SavePath: o.SavePath, Category: o.Category, Tags: o.Tag, Stopped: true})
+	err := q.c.Add(ctx, name, raw, qbit.AddOptions{SavePath: o.SavePath, Category: o.Category, Tags: o.Tag, Stopped: true, NoSubfolder: o.NoRoot})
 	if errors.Is(err, qbit.ErrAlreadyThere) {
 		return ErrAlreadyThere
 	}

@@ -219,6 +219,21 @@ func (f *fakeQbit) handler(t *testing.T) http.Handler {
 			return
 		}
 		f.list[h] = &fakeTorrent{Torrent: qbit.Torrent{Hash: h, Name: p.Name, SavePath: fields["savepath"], ContentPath: fields["savepath"] + "/" + p.Name, State: "stoppedDL", TotalSize: p.Total, Size: p.Total}, raw: raw, after: f.complete[h]}
+		// « Ne pas créer de sous-dossier » : chaque chemin perd sa racine.
+		if fields["contentLayout"] == "NoSubfolder" {
+			if f.names == nil {
+				f.names = map[string]map[int]string{}
+			}
+			n := map[int]string{}
+			for _, x := range p.Files {
+				rel := x.Path
+				if i := strings.IndexByte(rel, '/'); i >= 0 {
+					rel = rel[i+1:]
+				}
+				n[x.Index] = rel
+			}
+			f.names[h] = n
+		}
 		io.WriteString(w, "Ok.")
 	}))
 	mux.HandleFunc("/api/v2/torrents/recheck", auth(func(w http.ResponseWriter, r *http.Request) {

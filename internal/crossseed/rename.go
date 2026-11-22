@@ -346,6 +346,22 @@ func (e *Engine) addRenamed(ctx context.Context, env *Env, tg Target, r *Row) (s
 	if err != nil {
 		return StRenamed, err.Error()
 	}
+	// La fiche V3X range seulement ta copie dans un dossier en plus
+	// (YataReborn, Terminator 3 QTZ, 22/11/26) : ajoutée sans ce dossier, ses
+	// fichiers sont exactement ceux de ta copie. Aucun renommage.
+	if root := wrappedRoot(pairs); root != "" && canStripRoot(q) {
+		hash, _, err := e.addAndRename(ctx, tg, cfg, r.Key, m.ID, raw, save, pairs, true)
+		if err != nil {
+			switch {
+			case errors.Is(err, ErrInClient):
+				return StInClient, ""
+			case hash == "":
+				return StRenamed, err.Error()
+			}
+			return StFailed, err.Error()
+		}
+		return StChecking, "ajoutée sans le dossier « " + root + " » du .torrent : ses fichiers sont ceux de ta copie, rien ne bouge sur le disque"
+	}
 	if !q.CanRename() {
 		return e.addLinked(ctx, tg, cfg, r, link, raw, t, save, pairs, all)
 	}
@@ -357,7 +373,7 @@ func (e *Engine) addRenamed(ctx context.Context, env *Env, tg Target, r *Row) (s
 		}
 		return StRenamed, err.Error() + " : ajout à faire à la main"
 	}
-	hash, n, err := e.addAndRename(ctx, tg, cfg, r.Key, m.ID, raw, save, pairs)
+	hash, n, err := e.addAndRename(ctx, tg, cfg, r.Key, m.ID, raw, save, pairs, false)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrInClient):
@@ -415,10 +431,32 @@ func plural(n int) string {
 	return ""
 }
 
+// wrappedRoot : le dossier que la release V3X ajoute autour des chemins de ta
+// copie (« Dossier/Film.mkv » contre « Film.mkv »), ou "" si les noms
+// diffèrent autrement.
+func wrappedRoot(pairs []client.Rename) string {
+	root := ""
+	for _, p := range pairs {
+		i := strings.IndexByte(p.From, '/')
+		if i <= 0 || p.From[i+1:] != p.To || (root != "" && p.From[:i] != root) {
+			return ""
+		}
+		root = p.From[:i]
+	}
+	return root
+}
+
+func canStripRoot(q client.Client) bool {
+	rs, ok := q.(client.RootStripper)
+	return ok && rs.CanStripRoot()
+}
+
 // addAndRename : ajout à l'arrêt, renommages dans le client, contrôle des
 // noms obtenus, puis vérification et surveillance (démarrage à 100 %).
+// noRoot : ajout sans le dossier racine du .torrent (voir wrappedRoot), les
+// noms obtenus sont alors déjà ceux de ta copie, rien à renommer.
 // Un échec après l'ajout retire le torrent (fichiers jamais touchés).
-func (e *Engine) addAndRename(ctx context.Context, tg Target, cfg *config.Config, key, id string, raw []byte, save string, pairs []client.Rename) (string, int, error) {
+func (e *Engine) addAndRename(ctx context.Context, tg Target, cfg *config.Config, key, id string, raw []byte, save string, pairs []client.Rename, noRoot bool) (string, int, error) {
 	q := tg.Client
 	t, err := torrent.Parse(raw)
 	if err != nil {
@@ -428,7 +466,7 @@ func (e *Engine) addAndRename(ctx context.Context, tg Target, cfg *config.Config
 	if lst, err := q.List(ctx, []string{hash}); err == nil && len(lst) > 0 {
 		return hash, 0, ErrInClient
 	}
-	if err := q.Add(ctx, "[V3X] "+t.Name+".torrent", raw, client.AddOptions{SavePath: save, Category: cfg.Category, Tag: cfg.Tag}); err != nil {
+	if err := q.Add(ctx, "[V3X] "+t.Name+".torrent", raw, client.AddOptions{SavePath: save, Category: cfg.Category, Tag: cfg.Tag, NoRoot: noRoot}); err != nil {
 		if errors.Is(err, client.ErrAlreadyThere) {
 			return hash, 0, ErrInClient
 		}
@@ -455,12 +493,23 @@ func (e *Engine) addAndRename(ctx context.Context, tg Target, cfg *config.Config
 	}
 	n := 0
 	for _, p := range pairs {
-		if got[p.Index] != p.From {
+		want := p.From
+		if noRoot {
+			want = p.To
+		}
+		if got[p.Index] != want {
 			return undo(errors.New("le client ne voit pas les mêmes noms que le .torrent : ajout annulé"))
 		}
 		if p.From != p.To {
 			n++
 		}
+	}
+	if noRoot {
+		if err := q.Recheck(ctx, hash); err != nil {
+			return hash, 0, errors.New("vérification impossible à lancer : " + err.Error())
+		}
+		e.Watch(tg.ID, key, t.Name, id, hash)
+		return hash, 0, nil
 	}
 	if err := q.RenameFiles(ctx, hash, pairs); err != nil {
 		return undo(err)

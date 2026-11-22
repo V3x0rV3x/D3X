@@ -56,6 +56,15 @@ type AddOptions struct {
 	SavePath string // dossier qui contient la release, vu par le client
 	Category string
 	Tag      string
+	// NoRoot : ajouter sans le dossier racine du .torrent. Seulement pour un
+	// client qui le sait (voir RootStripper), les autres l'ignoreraient.
+	NoRoot bool
+}
+
+// RootStripper : le client sait ajouter un .torrent sans son dossier racine
+// (qBittorrent : « Ne pas créer de sous-dossier »).
+type RootStripper interface {
+	CanStripRoot() bool
 }
 
 // Client est un client torrent.
