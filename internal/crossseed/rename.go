@@ -294,7 +294,11 @@ func diskLookup(ctx context.Context, q client.Client, save string, rules []pathm
 // addRenamed : la release V3X ajoutée sous les noms de ta copie, dans le
 // client tg qui l'a.
 func (e *Engine) addRenamed(ctx context.Context, env *Env, tg Target, r *Row) (string, string) {
-	q, cfg := tg.Client, env.Cfg
+	// Modèle de catégorie résolu pour la copie d'origine (« {cat} » → sa
+	// catégorie) : il partait tel quel dans le client, qui créait une
+	// catégorie « {cat} » et laissait le torrent en gestion manuelle
+	// (YataReborn, 23/11/26).
+	q, cfg := tg.Client, WithCategory(env.Cfg, r.category)
 	link := e.linkerFor(cfg, tg)
 	if !q.CanRename() && link == nil {
 		return StRenamed, q.Kind() + " ne sait pas renommer les fichiers d'un torrent : ajout impossible (ou active les liens dans les réglages)"

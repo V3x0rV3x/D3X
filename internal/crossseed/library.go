@@ -790,7 +790,7 @@ func (e *Engine) addLibrary(ctx context.Context, r *LibRow) (string, string) {
 	if err := renameSafe(pairs, local, save, "", all, diskLookup(ctx, q, save, tg.PathMap)); err != nil {
 		return again, err.Error() + " (ou active les liens dans les réglages, symboliques pour un partage en lecture seule)"
 	}
-	hash, n, err := e.addAndRename(ctx, *tg, cfg, r.Key, r.Match.ID, r.raw, save, pairs, false)
+	hash, n, err := e.addAndRename(ctx, *tg, WithCategory(cfg, ""), r.Key, r.Match.ID, r.raw, save, pairs, false)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrInClient):
