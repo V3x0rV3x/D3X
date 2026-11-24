@@ -259,6 +259,7 @@ var errorTexts = map[string]string{
 	"audio_naming":            "le nom d'une release musicale doit suivre le nommage du site",
 	"name_missing_disc":       "le nom doit indiquer le disque d'origine",
 	"name_missing_gpu":        "le nom doit indiquer l'encodeur matériel",
+	"incomplete_file":         "un fichier n'est pas complet (des morceaux vides) : attends la fin du téléchargement dans ton client",
 	"team_reupload_forbidden": "cette team refuse les réuploads de ses releases",
 	"banned_tag":              "le groupe de cette release est refusé sur V3X",
 	"team_reupload_ask":       "cette team demande son accord avant un réupload",

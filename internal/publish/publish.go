@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -297,13 +298,34 @@ func (m *Manager) hash(ctx context.Context, j *Job) {
 		}
 		return
 	}
+	t, perr := torrent.Parse(raw)
+	// Fichier pas fini (des morceaux de zéros) : V3X refuserait ce .torrent,
+	// et personne ne pourrait le finir. Rien n'est envoyé (dann, 24/11/26).
+	if perr == nil {
+		if e := t.EmptyMedia(); e != nil {
+			if j.State == StHashing {
+				j.State, j.Error = StError, IncompleteText(e)
+			}
+			return
+		}
+	}
 	j.raw, j.FromCache, j.Hashed = raw, cached, j.Total
-	if t, err := torrent.Parse(raw); err == nil {
+	if perr == nil {
 		j.InfoHash = strings.ToLower(t.InfoHash)
 	}
 	if j.State == StHashing {
 		j.State = StReady
 	}
+}
+
+// IncompleteText : le refus d'un fichier pas fini, en clair.
+func IncompleteText(e *torrent.Empty) string {
+	mib := (e.Bytes + 1<<19) >> 20
+	if mib < 1 {
+		mib = 1
+	}
+	return "« " + path.Base(e.File) + " » n'est pas complet : " + strconv.FormatInt(mib, 10) +
+		" Mio sont vides (des zéros à la place des données). Il est sans doute encore en téléchargement dans ton client : attends qu'il affiche 100 % (au besoin, force une revérification), vérifie qu'il se lit jusqu'au bout, puis relance la publication."
 }
 
 // Busy dit si une publication est en route (hachage, envoi au site, seed).

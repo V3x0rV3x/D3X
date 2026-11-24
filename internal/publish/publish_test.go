@@ -240,6 +240,38 @@ func TestPublishFlow(t *testing.T) {
 	}
 }
 
+// Fichier pas fini (dann, 24/11/26 : le .torrent d'Indéfendable S01E03 était
+// vide à 72 %) : des morceaux de zéros dans la vidéo, le hachage s'arrête en
+// erreur et rien ne peut partir au site.
+func TestPublishIncompleteFile(t *testing.T) {
+	_, dir := release(t)
+	mkv := filepath.Join(dir, "Film.2024.1080p.WEB.H264-D3X.mkv")
+	data, _ := os.ReadFile(mkv)
+	clear(data[1<<20 : 3<<20]) // 2 Mio pas encore reçus
+	os.WriteFile(mkv, data, 0o644)
+	fc := newFakeClient(t)
+	site := newFakeSite(t)
+	q, _ := client.New(client.Options{URL: fc.srv.URL})
+	clients := envOf(site, crossseed.Target{ID: "c1", Name: "qBittorrent", Client: q})
+	m := New(clients, crossseed.New(clients), "test")
+
+	j, err := m.Start(source.Local{}, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wait(t, func() bool { g, _ := m.Get(j.ID); return g.State != StHashing })
+	g, _ := m.Get(j.ID)
+	if g.State != StError || !strings.Contains(g.Error, "« Film.2024.1080p.WEB.H264-D3X.mkv » n'est pas complet : 2 Mio sont vides") {
+		t.Fatalf("état %s, erreur %q", g.State, g.Error)
+	}
+	if err := m.Publish(j.ID, map[string]string{"categoryId": "11", "releaseName": "Film.2024.1080p.WEB.H264-D3X"}); err == nil {
+		t.Fatal("publication acceptée malgré le fichier incomplet")
+	}
+	if site.uploaded != nil {
+		t.Fatal("un .torrent est parti au site")
+	}
+}
+
 // Le client ne voit pas le dossier de la release (meptalon, 9/11/26 : D3X et
 // le client dans deux conteneurs, dossier monté ailleurs) : rien ne part au
 // site, la publication reste prête et dit quoi vérifier. Une fois le dossier
