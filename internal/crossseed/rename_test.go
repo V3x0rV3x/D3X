@@ -433,3 +433,97 @@ func TestLinkedApply(t *testing.T) {
 		t.Fatalf("ajouté dans %s, renommages %v", fq.list[h].SavePath, fq.renames)
 	}
 }
+
+// Copie renommée dans le client (YataReborn, 24/11/26) : son .torrent d'origine
+// dit « Film.2022.GRP », mais ses fichiers portent maintenant les noms de la
+// fiche V3X. La ligne est un ajout ordinaire, sans aucun renommage.
+func TestRenamedInClientIsAdd(t *testing.T) {
+	isolatedConfig(t)
+
+	copyRaw := mkTorrent("Film.2022.GRP", map[string]int64{"Film.2022.GRP.mkv": 3_000_000_000}, "https://autre.invalid/announce", "AUTRE")
+	v3xRaw := mkTorrent("Film.2.2022.GRP", map[string]int64{"Film.2.2022.GRP.mkv": 3_000_000_000}, "https://announce.v3x.club/pk/announce", "")
+	pc, _ := torrent.Parse(copyRaw)
+	pv, _ := torrent.Parse(v3xRaw)
+	h := strings.ToLower(pc.InfoHash)
+	const id = "55555555-5555-4555-8555-555555555555"
+
+	fq := &fakeQbit{
+		list:     map[string]*fakeTorrent{},
+		complete: map[string]float64{},
+		names:    map[string]map[int]string{h: {0: "Film.2.2022.GRP/Film.2.2022.GRP.mkv"}},
+		disk:     map[string]int64{"/data/autre/Film.2.2022.GRP/Film.2.2022.GRP.mkv": 3_000_000_000},
+	}
+	fq.list[h] = &fakeTorrent{Torrent: qbit.Torrent{
+		Hash: h, Name: pc.Name, SavePath: "/data/autre", ContentPath: "/data/autre/Film.2.2022.GRP", Progress: 1, State: "stalledUP",
+		Size: pc.Total, TotalSize: pc.Total, MagnetURI: "magnet:?xt=urn:btih:" + h + "&tr=https%3A%2F%2Fautre.invalid%2Fannounce",
+	}, raw: copyRaw}
+	qs := httptest.NewServer(fq.handler(t))
+	defer qs.Close()
+
+	var exactAsked int
+	vs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/me":
+			io.WriteString(w, `{"username":"test","ratio":2.5,"hitAndRun":0}`)
+		case "/api/d3x/match":
+			var in struct{ Items []v3x.MatchItem }
+			json.NewDecoder(r.Body).Decode(&in)
+			type res struct {
+				Key   string     `json:"key"`
+				Match *v3x.Match `json:"match"`
+			}
+			var out []res
+			for _, it := range in.Items {
+				var m *v3x.Match
+				switch {
+				case it.ContentHash == pv.ContentHash:
+					exactAsked++
+					m = &v3x.Match{Kind: "exact", ID: id, Name: pv.Name, InfoHash: pv.InfoHash, Seeders: 1, Size: pv.Total}
+				case it.SizeHash == pv.SizeHash:
+					m = &v3x.Match{Kind: "renamed", ID: id, Name: pv.Name, InfoHash: pv.InfoHash, Seeders: 1, Size: pv.Total}
+				}
+				out = append(out, res{Key: it.Key, Match: m})
+			}
+			json.NewEncoder(w).Encode(map[string]interface{}{"results": out})
+		case "/torznab/download":
+			w.Write(v3xRaw)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer vs.Close()
+
+	q, _ := client.New(client.Options{URL: qs.URL, User: "admin", Pass: "secret"})
+	v := v3x.New(vs.URL, "cle", "D3X/test")
+	e := New(oneClient(q, v, config.Defaults()))
+	if err := e.StartScan(); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return !e.Scanning() })
+	var key string
+	for _, r := range e.Rows() {
+		if r.Name == pc.Name {
+			if r.Status != StAdd || r.Match == nil || r.Match.ID != id {
+				t.Fatalf("ligne %s : %s (%s), « À ajouter » attendu", r.Name, r.Status, r.Detail)
+			}
+			key = r.Key
+		}
+	}
+	if key == "" || exactAsked == 0 {
+		t.Fatalf("ligne absente ou noms actuels jamais comparés (%d)", exactAsked)
+	}
+	if n, err := e.Apply([]string{key}); err != nil || n != 1 {
+		t.Fatalf("%d %v", n, err)
+	}
+	hv := strings.ToLower(pv.InfoHash)
+	waitFor(t, func() bool { st, ok := e.WatchOf(hv); return ok && st.Status == StSeeding })
+
+	fq.mu.Lock()
+	defer fq.mu.Unlock()
+	if len(fq.renames) != 0 {
+		t.Fatalf("renommages inattendus : %v", fq.renames)
+	}
+	if fq.list[hv] == nil || fq.list[hv].SavePath != "/data/autre" {
+		t.Fatalf("release V3X absente ou mal rangée : %+v", fq.list[hv])
+	}
+}

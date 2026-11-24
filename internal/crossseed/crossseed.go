@@ -611,6 +611,7 @@ func (e *Engine) runScan(ctx context.Context) error {
 			}
 		}
 	}
+	e.rematchCurrentNames(ctx, env.V3X, retry, byID, order, rowOf, known, live)
 	e.setProgress("match", len(items), len(items), "")
 
 	var left []*Row
@@ -715,6 +716,81 @@ func sigFromClient(ctx context.Context, q client.Client, hash, name string) (*Si
 		s.noteFile(f.Path, f.Size)
 	}
 	return s, nil
+}
+
+// rematchCurrentNames : une copie dont les fichiers ont été renommés dans le
+// client garde, dans son .torrent d'origine, les noms d'avant. Son empreinte
+// (lue dans ce .torrent) ne colle donc pas à une fiche V3X qui porte les noms
+// ACTUELS, et la ligne passait en « Noms différents » alors que rien n'était à
+// renommer (YataReborn, 24/11/26 : Enola Holmes 2, Logan Lucky…). Les lignes
+// « Noms différents » lues dans un .torrent d'origine sont recomparées avec les
+// noms du client ; même empreinte que la fiche = ajout ordinaire. Un échec
+// (client ou site injoignable) laisse la ligne telle quelle : elle reste
+// ajoutable sous tes noms.
+func (e *Engine) rematchCurrentNames(ctx context.Context, v *v3x.Client, retry *v3x.Retry, byID map[string]Target, order []string, rowOf map[string]*Row, known, live map[string]bool) {
+	var items []v3x.MatchItem
+	byKey := map[string]*Row{}
+	cur := map[string]*Sig{}
+	for _, k := range order {
+		r := rowOf[k]
+		// Sans info-hash, l'empreinte vient déjà de la liste du client (noms actuels).
+		if r == nil || r.Status != StRenamed || r.sig == nil || r.sig.InfoHash == "" || ctx.Err() != nil {
+			continue
+		}
+		t, ok := byID[r.Client]
+		if !ok || t.Client == nil {
+			continue
+		}
+		files, _, err := t.Client.Files(ctx, r.hash)
+		if err != nil {
+			continue
+		}
+		var kept []torrent.File
+		var real int64
+		for _, f := range files {
+			if !torrent.IsPadPath(f.Path) {
+				kept = append(kept, f)
+				real += f.Size
+			}
+		}
+		// Mêmes fichiers, mêmes tailles : seuls les noms peuvent avoir changé.
+		if len(kept) != r.sig.Files || real != r.sig.Real {
+			continue
+		}
+		ch := torrent.ContentSignature(kept, r.sig.Total)
+		if ch == r.sig.ContentHash {
+			continue // pas renommée dans le client : la fiche V3X a vraiment d'autres noms
+		}
+		s := *r.sig
+		s.ContentHash = ch
+		key := strconv.Itoa(len(items))
+		items = append(items, v3x.MatchItem{Key: key, ContentHash: ch, SizeHash: s.SizeHash, Total: s.Total})
+		byKey[key] = r
+		cur[key] = &s
+	}
+	for i := 0; i < len(items) && ctx.Err() == nil; i += v3x.MatchBatchSize {
+		res, err := v.MatchBatch(ctx, retry, items[i:min(i+v3x.MatchBatchSize, len(items))])
+		if err != nil {
+			return
+		}
+		for key, m := range res {
+			r := byKey[key]
+			if r == nil || m == nil || m.Kind != "exact" {
+				continue
+			}
+			if m.NameCheck && !sameReleaseName(m.Name, r.Name) {
+				continue
+			}
+			r.sig, r.Match, r.CanAdd, r.Detail = cur[key], m, false, ""
+			r.Status = StAdd
+			if known[strings.ToLower(m.InfoHash)] {
+				r.Status = StInClient
+				if !live[strings.ToLower(m.InfoHash)] {
+					r.Idle, r.Detail = true, "la release V3X « "+m.Name+" » est dans ton client, mais "+idleWhy
+				}
+			}
+		}
+	}
 }
 
 func sigOf(t *torrent.Torrent) *Sig {
