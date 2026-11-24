@@ -147,7 +147,6 @@ const ERRORS = {
   audio_naming: "le nom d'une release musicale doit suivre le nommage du site",
   name_missing_disc: "le nom doit indiquer le disque d'origine",
   name_missing_gpu: "le nom doit indiquer l'encodeur matériel",
-  exclusive_group_mismatch: "l'exclusivité est réservée aux releases de ta team",
   team_reupload_forbidden: "cette team refuse les réuploads de ses releases",
   banned_tag: "le groupe de cette release est refusé sur V3X",
   team_reupload_ask: "cette team demande son accord avant un réupload",
@@ -436,7 +435,6 @@ async function restoreKept(path) {
     break;
   }
   $("#f-anon").checked = f.anonymous === "true";
-  $("#f-excl").checked = f.exclusive === "true";
   if (f.teamRelease != null) {
     $("#f-team").checked = f.teamRelease === "true";
     pub.dirty.team = true;
@@ -496,7 +494,6 @@ function resetForm() {
   $("#book-field").classList.add("hidden");
   $("#versions").classList.add("hidden");
   $("#f-notmdb").checked = false;
-  $("#f-excl").checked = false;
   $("#f-team").checked = false;
   $("#f-root").value = "";
   fillLeaves("", "");
@@ -1499,7 +1496,6 @@ function fields() {
     nfo: $("#f-nfo").value,
     language: $("#f-lang").value,
     anonymous: String($("#f-anon").checked),
-    exclusive: String($("#f-excl").checked),
   };
   if ($("#f-root").value === "series" && $("#f-season").value.trim()) f.season = $("#f-season").value.trim();
   if (pub.tmdb && !isGame()) f.tmdbUrl = "https://www.themoviedb.org/" + pub.tmdb.type + "/" + pub.tmdb.id;
