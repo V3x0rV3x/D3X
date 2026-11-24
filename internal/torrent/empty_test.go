@@ -62,8 +62,9 @@ func emptyFixture(t *testing.T, name string, pl int64, files []int64, zeros ...i
 
 func TestEmptyMedia(t *testing.T) {
 	const mib = 1 << 20
-	// Indéfendable S01E03 : des trous éparpillés dans la vidéo.
-	if e := emptyFixture(t, "Serie.S01E03.mkv", mib, []int64{10 * mib}, 1, 4, 7).EmptyMedia(); e == nil || e.Pieces != 3 || e.Bytes != 3*mib || e.File != "Serie.S01E03.mkv" {
+	// Indéfendable S01E03 : des trous éparpillés dans la vidéo (le premier,
+	// près du début et suivi de données, peut être du remplissage : ignoré).
+	if e := emptyFixture(t, "Serie.S01E03.mkv", mib, []int64{10 * mib}, 1, 4, 7).EmptyMedia(); e == nil || e.Pieces != 2 || e.Bytes != 2*mib || e.File != "Serie.S01E03.mkv" {
 		t.Fatalf("trous de vidéo : %+v", e)
 	}
 	// Un seul morceau vide (bourrage, zone réservée) : jamais un refus.
@@ -71,7 +72,7 @@ func TestEmptyMedia(t *testing.T) {
 		t.Fatalf("un morceau isolé : %+v", e)
 	}
 	// Le dernier morceau, plus court, compte aussi.
-	if e := emptyFixture(t, "Film.mkv", mib, []int64{9*mib + 12345}, 2, 9).EmptyMedia(); e == nil || e.Pieces != 2 || e.Bytes != mib+12345 {
+	if e := emptyFixture(t, "Film.mkv", mib, []int64{9*mib + 12345}, 1, 5, 9).EmptyMedia(); e == nil || e.Pieces != 2 || e.Bytes != mib+12345 {
 		t.Fatalf("dernier morceau : %+v", e)
 	}
 	// Une image disque a des zones vides normales.
@@ -89,5 +90,28 @@ func TestEmptyMedia(t *testing.T) {
 	// Côte Ouest : 11 morceaux de 16 Mio sur des milliers : refusé (8 Mio).
 	if e := emptyFixture(t, "Pack.mkv", 16*mib, []int64{3000 * 16 * mib}, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15).EmptyMedia(); e == nil || e.Pieces != 11 {
 		t.Fatalf("Côte Ouest : %+v", e)
+	}
+	// Album : zéros juste après les tags de chaque piste (remplissage, relevé
+	// du 24/11/26 : faux positifs sur des FLAC et des MP3 sains) : passe.
+	album := []int64{1000, 10 * mib, 10 * mib, 10 * mib}
+	pad := []int{4, 5, 6, 14, 15, 16, 24, 25, 26}
+	if e := emptyFixture(t, "Album", mib, album, pad...).EmptyMedia(); e != nil {
+		t.Fatalf("remplissage des tags : %+v", e)
+	}
+	// Même album, une piste vide de bout en bout (Guitar Boogie) : refusé.
+	whole := append([]int{}, pad...)
+	for i := 11; i <= 20; i++ {
+		whole = append(whole, i)
+	}
+	if e := emptyFixture(t, "Album", mib, album, whole...).EmptyMedia(); e == nil || e.File != "Album/e2.mkv" {
+		t.Fatalf("piste vide entière : %+v", e)
+	}
+	// Un bloc en tête de plus de 32 Mio n'est pas du remplissage : refusé.
+	head := []int{}
+	for i := 1; i <= 40; i++ {
+		head = append(head, i)
+	}
+	if e := emptyFixture(t, "Film.mkv", mib, []int64{100 * mib}, head...).EmptyMedia(); e == nil || e.Pieces != 40 {
+		t.Fatalf("bloc de 40 Mio en tête : %+v", e)
 	}
 }

@@ -247,7 +247,10 @@ func TestPublishIncompleteFile(t *testing.T) {
 	_, dir := release(t)
 	mkv := filepath.Join(dir, "Film.2024.1080p.WEB.H264-D3X.mkv")
 	data, _ := os.ReadFile(mkv)
-	clear(data[1<<20 : 3<<20]) // 2 Mio pas encore reçus
+	// Trous éparpillés d'un téléchargement en cours. Le premier, près du
+	// début, pourrait être du remplissage de tags : seul le second compte.
+	clear(data[512<<10 : 1<<20])
+	clear(data[2<<20 : 4<<20]) // 2 Mio pas encore reçus
 	os.WriteFile(mkv, data, 0o644)
 	fc := newFakeClient(t)
 	site := newFakeSite(t)

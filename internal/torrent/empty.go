@@ -15,6 +15,15 @@ import (
 // compressée ou un livre : leurs données ne sont jamais un morceau entier de
 // zéros. Pas les ISO, archives, WAV ni VOB. Même règle que V3X
 // (apps/api/src/lib/empty-pieces.ts), qui refuse ce .torrent.
+//
+// Remplissage des tags : un FLAC ou un MP3 garde souvent une zone de zéros
+// juste après ses tags et sa pochette (bloc PADDING, remplissage ID3), au même
+// endroit sur chaque piste d'un album. Le PREMIER bloc de zéros d'un fichier
+// est ignoré quand il commence dans ses 32 premiers Mio, en fait 32 au plus et
+// qu'il est suivi de vraies données. Une piste vide de bout en bout et les
+// trous plus loin comptent toujours.
+const padMax = 32 << 20
+
 var emptyMediaRe = regexp.MustCompile(`(?i)\.(mkv|mp4|m4v|avi|m2ts|mts|ts|mov|wmv|webm|mpe?g|flac|mp3|m4a|m4b|aac|ogg|opus|wma|epub|pdf|cbz|cbr|mobi|azw3)$`)
 
 // Empty : les morceaux vides d'un .torrent.
@@ -67,21 +76,40 @@ func (t *Torrent) EmptyMedia() *Empty {
 		if to > count-1 {
 			to = count - 1
 		}
-		for i := from; i <= to; i++ {
-			n := pl
+		var zs []int64
+		size := func(i int64) int64 {
 			if i == count-1 {
-				n = t.Total - i*pl
+				return t.Total - i*pl
 			}
+			return pl
+		}
+		for i := from; i <= to; i++ {
+			n := size(i)
 			if n <= 0 {
 				continue
 			}
 			media++
 			if bytes.Equal(t.Pieces[i*20:i*20+20], zeroHash(n)) {
-				e.Pieces++
-				e.Bytes += n
-				if e.File == "" {
-					e.File = f.Path
-				}
+				zs = append(zs, i)
+			}
+		}
+		// Remplissage des tags : premier bloc, près du début, suivi de vraies
+		// données (le morceau d'après, dans le fichier, n'est pas vide).
+		if len(zs) > 0 {
+			k := 0
+			for k+1 < len(zs) && zs[k+1] == zs[k]+1 {
+				k++
+			}
+			a, b := zs[0], zs[k]
+			if b+1 <= to && a*pl-f.Offset < padMax && (b-a+1)*pl <= padMax {
+				zs = zs[k+1:]
+			}
+		}
+		for _, i := range zs {
+			e.Pieces++
+			e.Bytes += size(i)
+			if e.File == "" {
+				e.File = f.Path
 			}
 		}
 	}
