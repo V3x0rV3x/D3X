@@ -257,6 +257,8 @@ var errorTexts = map[string]string{
 	"ddl_source":              "la release porte la marque d'un site de téléchargement direct",
 	"free_software":           "les logiciels libres et gratuits ne se publient pas sur V3X",
 	"cinema_capture":          "son « MD » (VF enregistrée au micro dans une salle de cinéma) : refusé comme le CAM et le TS",
+	"integrale_incomplete":    "ce pack s'appelle « intégrale » mais il lui manque des saisons déjà diffusées : publie les saisons séparément",
+	"virustotal_not_file":     "ce lien VirusTotal est le rapport d'une page web (lien MEGA, Drive…), pas d'un fichier : colle le rapport du fichier (…/gui/file/…)",
 	"audio_naming":            "le nom d'une release musicale doit suivre le nommage du site",
 	"name_missing_disc":       "le nom doit indiquer le disque d'origine",
 	"name_missing_gpu":        "le nom doit indiquer l'encodeur matériel",
