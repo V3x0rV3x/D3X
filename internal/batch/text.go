@@ -256,6 +256,7 @@ var errorTexts = map[string]string{
 	"resolution_too_low":      "la résolution est sous le minimum de V3X",
 	"ddl_source":              "la release porte la marque d'un site de téléchargement direct",
 	"free_software":           "les logiciels libres et gratuits ne se publient pas sur V3X",
+	"cinema_capture":          "son « MD » (VF enregistrée au micro dans une salle de cinéma) : refusé comme le CAM et le TS",
 	"audio_naming":            "le nom d'une release musicale doit suivre le nommage du site",
 	"name_missing_disc":       "le nom doit indiquer le disque d'origine",
 	"name_missing_gpu":        "le nom doit indiquer l'encodeur matériel",
