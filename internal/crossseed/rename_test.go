@@ -75,6 +75,18 @@ func TestRenameSafe(t *testing.T) {
 	if err := renameSafe(pairs, local, "/data", "/data/L", other, absent); err == nil || !strings.Contains(err.Error(), "autre torrent") {
 		t.Fatalf("emplacement occupé : %v", err)
 	}
+	// Un torrent sans dossier racine rangé dans le même dossier : son
+	// ContentPath est le dossier d'enregistrement, pas un emplacement de
+	// release ; il ne bloque pas (YataReborn, 27/11). Ni un torrent sans
+	// chemin connu.
+	noRoot := []client.Torrent{{ContentPath: "/data", SavePath: "/data"}, {ContentPath: ""}}
+	if err := renameSafe(pairs, local, "/data", "/data/L", noRoot, absent); err != nil {
+		t.Fatalf("torrent sans dossier racine : %v", err)
+	}
+	// Mais un vrai dossier de release au même endroit bloque toujours.
+	if err := renameSafe(pairs, local, "/data", "/data/L", []client.Torrent{{ContentPath: "/data/V3X.Root", SavePath: "/data"}}, absent); err == nil || !strings.Contains(err.Error(), "autre torrent") {
+		t.Fatalf("emplacement occupé avec SavePath : %v", err)
+	}
 	// Les torrents qui partagent ta copie ne gênent pas ; dossier absent : ses
 	// fichiers ne sont même pas demandés.
 	var asked []string

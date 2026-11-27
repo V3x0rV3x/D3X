@@ -219,7 +219,15 @@ func renameSafe(pairs []client.Rename, local []torrent.File, save, self string, 
 	for root := range roots {
 		target := clientJoin(save, root)
 		for _, t := range all {
-			if samePath(t.ContentPath, self) {
+			if t.ContentPath == "" || samePath(t.ContentPath, self) {
+				continue
+			}
+			// Torrent multi-fichiers sans dossier racine (« Ne pas créer de
+			// sous-dossier » dans qBittorrent) : son ContentPath est son
+			// dossier d'enregistrement, pas un dossier de release. Le compter
+			// bloquait tout renommage dans ce dossier (YataReborn, 27/11).
+			// Ses fichiers sont vus par la vérification du disque plus bas.
+			if t.SavePath != "" && samePath(t.ContentPath, t.SavePath) {
 				continue
 			}
 			if under(t.ContentPath, target) || under(target, t.ContentPath) {
