@@ -35,6 +35,7 @@ var ErrNoRename = errors.New("ce client ne sait pas renommer les fichiers d'un t
 func (q *qbitClient) CanRename() bool { return true }
 
 func (q *qbitClient) RenameFiles(ctx context.Context, hash string, renames []Rename) error {
+	hash = q.idOf(hash) // hybride rangé sous sa v2 (voir qbit_hybrid.go)
 	for _, r := range renames {
 		if r.From == r.To {
 			continue

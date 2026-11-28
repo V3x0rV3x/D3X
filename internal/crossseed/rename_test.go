@@ -623,3 +623,91 @@ func TestRenamedApplySlowClient(t *testing.T) {
 		t.Fatalf("nom dans le client : %q, renommages %v", got, fq.renames)
 	}
 }
+
+// Un .torrent V3X hybride v1+v2 (fiches d'avant le 11/09/26) : qBittorrent
+// (libtorrent 2) le range sous sa v2 tronquée, pas sous la v1 que D3X calcule.
+// D3X ne le retrouvait jamais après l'ajout (« le client n'a pas confirmé
+// l'ajout », YataReborn, Flashdance 28/11/26). Il passe maintenant par
+// l'identifiant du client.
+func TestRenamedApplyHybridClientID(t *testing.T) {
+	isolatedConfig(t)
+	oldWait, oldPoll := clientWait, clientPoll
+	clientWait, clientPoll = 10*time.Second, 5*time.Millisecond
+	defer func() { clientWait, clientPoll = oldWait, oldPoll }()
+
+	mineFiles := map[string]int64{"film.mkv": 3_000_000_000}
+	v3xFiles := map[string]int64{"Film.2020.1080p.WEB-GRP.mkv": 3_000_000_000}
+	copyRaw := mkTorrent("Ma Copie", mineFiles, "https://autre.invalid/announce", "AUTRE")
+	v3xRaw := mkTorrent("Film.2020.1080p.WEB-GRP", v3xFiles, "https://announce.v3x.club/pk/announce", "")
+	pv, _ := torrent.Parse(v3xRaw)
+	h := strings.ToLower(pv.InfoHash)
+	const id = "abcdefabcdefabcdefabcdefabcdefabcdefabcd" // v2 tronquée, côté client
+
+	fq := &fakeQbit{list: map[string]*fakeTorrent{}, complete: map[string]float64{}, disk: map[string]int64{
+		"/data/autre/Ma Copie/film.mkv": 3_000_000_000,
+	}, hybrid: map[string]string{h: id}}
+	p, _ := torrent.Parse(copyRaw)
+	hc := strings.ToLower(p.InfoHash)
+	fq.list[hc] = &fakeTorrent{Torrent: qbit.Torrent{
+		Hash: hc, Name: p.Name, SavePath: "/data/autre", ContentPath: "/data/autre/" + p.Name, Progress: 1, State: "stalledUP",
+		Size: p.Total, TotalSize: p.Total, MagnetURI: "magnet:?xt=urn:btih:" + hc + "&tr=https%3A%2F%2Fautre.invalid%2Fannounce",
+	}, raw: copyRaw}
+	qs := httptest.NewServer(fq.handler(t))
+	defer qs.Close()
+	vs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/me":
+			io.WriteString(w, `{"username":"test","ratio":2.5,"hitAndRun":0}`)
+		case "/api/d3x/match":
+			var in struct{ Items []v3x.MatchItem }
+			json.NewDecoder(r.Body).Decode(&in)
+			type res struct {
+				Key   string     `json:"key"`
+				Match *v3x.Match `json:"match"`
+			}
+			var out []res
+			for _, it := range in.Items {
+				var m *v3x.Match
+				if it.SizeHash == pv.SizeHash {
+					m = &v3x.Match{Kind: "renamed", ID: "33333333-3333-3333-3333-333333333333", Name: pv.Name, InfoHash: pv.InfoHash, Seeders: 1, Size: pv.Total}
+				}
+				out = append(out, res{Key: it.Key, Match: m})
+			}
+			json.NewEncoder(w).Encode(map[string]interface{}{"results": out})
+		case "/torznab/download":
+			w.Write(v3xRaw)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer vs.Close()
+
+	q, _ := client.New(client.Options{URL: qs.URL, User: "admin", Pass: "secret"})
+	v := v3x.New(vs.URL, "cle", "D3X/test")
+	e := New(oneClient(q, v, config.Defaults()))
+	if err := e.StartScan(); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return !e.Scanning() })
+	var keys []string
+	for _, r := range e.Rows() {
+		if r.Status == StRenamed {
+			keys = append(keys, r.Key)
+		}
+	}
+	if len(keys) != 1 {
+		t.Fatalf("%d lignes « noms différents », 1 attendue", len(keys))
+	}
+	if n, err := e.Apply(keys); err != nil || n != 1 {
+		t.Fatalf("%d %v", n, err)
+	}
+	waitFor(t, func() bool { st, ok := e.WatchOf(h); return ok && st.Status == StSeeding })
+	fq.mu.Lock()
+	defer fq.mu.Unlock()
+	if fq.list[id] == nil || fq.list[h] != nil {
+		t.Fatalf("rangé sous %v", fq.list)
+	}
+	if got := fq.names[id][0]; got != "Ma Copie/film.mkv" {
+		t.Fatalf("nom dans le client : %q, renommages %v", got, fq.renames)
+	}
+}

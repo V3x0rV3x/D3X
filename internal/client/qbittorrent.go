@@ -12,14 +12,17 @@ import (
 	"github.com/V3x0rV3x/D3X/internal/torrent"
 )
 
-type qbitClient struct{ c *qbit.Client }
+type qbitClient struct {
+	c  *qbit.Client
+	hy hybridIDs // empreinte v1 → identifiant du client des torrents hybrides
+}
 
 func newQbit(o Options) (Client, error) {
 	c, err := qbit.New(qbit.Options{URL: o.URL, User: o.User, Pass: o.Pass, Insecure: o.Insecure})
 	if err != nil {
 		return nil, err
 	}
-	return &qbitClient{c}, nil
+	return &qbitClient{c: c}, nil
 }
 
 func (q *qbitClient) Kind() string { return "qBittorrent" }
@@ -27,9 +30,39 @@ func (q *qbitClient) Kind() string { return "qBittorrent" }
 func (q *qbitClient) Version(ctx context.Context) (string, error) { return q.c.Version(ctx) }
 
 func (q *qbitClient) List(ctx context.Context, hashes []string) ([]Torrent, error) {
-	list, err := q.c.List(ctx, "", hashes)
+	ids := make([]string, len(hashes))
+	for i, h := range hashes {
+		ids[i] = q.idOf(h)
+	}
+	list, err := q.c.List(ctx, "", ids)
 	if err != nil {
 		return nil, err
+	}
+	// Une empreinte demandée et absente peut être la v1 d'un hybride que le
+	// client range sous sa v2 (voir qbit_hybrid.go) : on la cherche encore une
+	// fois sous son identifiant.
+	if len(hashes) > 0 {
+		seen := map[string]bool{}
+		for _, t := range list {
+			for _, h := range t.Hashes() {
+				seen[h] = true
+			}
+		}
+		var extra []string
+		for _, h := range hashes {
+			if seen[strings.ToLower(h)] {
+				continue
+			}
+			if id, ok := q.refreshIDs(ctx, h); ok && !seen[id] {
+				extra = append(extra, id)
+				seen[id] = true
+			}
+		}
+		if len(extra) > 0 {
+			if more, err := q.c.List(ctx, "", extra); err == nil {
+				list = append(list, more...)
+			}
+		}
 	}
 	out := make([]Torrent, 0, len(list))
 	for _, t := range list {
@@ -45,7 +78,7 @@ func (q *qbitClient) List(ctx context.Context, hashes []string) ([]Torrent, erro
 }
 
 func (q *qbitClient) Export(ctx context.Context, hash string) ([]byte, error) {
-	b, err := q.c.Export(ctx, hash)
+	b, err := q.c.Export(ctx, q.idOf(hash))
 	if errors.Is(err, qbit.ErrNoExport) {
 		return nil, ErrNoExport
 	}
@@ -54,7 +87,14 @@ func (q *qbitClient) Export(ctx context.Context, hash string) ([]byte, error) {
 
 // Files : la liste de fichiers de qBittorrent (qBittorrent avant 4.5, sans export).
 func (q *qbitClient) Files(ctx context.Context, hash string) ([]torrent.File, int64, error) {
-	b, err := q.c.Raw(ctx, http.MethodGet, "/api/v2/torrents/files", url.Values{"hash": {hash}})
+	id := q.idOf(hash)
+	b, err := q.c.Raw(ctx, http.MethodGet, "/api/v2/torrents/files", url.Values{"hash": {id}})
+	if isNotFound(err) {
+		// Peut-être un hybride rangé sous sa v2 (voir qbit_hybrid.go).
+		if nid, ok := q.refreshIDs(ctx, hash); ok && nid != id {
+			b, err = q.c.Raw(ctx, http.MethodGet, "/api/v2/torrents/files", url.Values{"hash": {nid}})
+		}
+	}
 	if err != nil {
 		return nil, 0, err
 	}
@@ -85,6 +125,9 @@ func (q *qbitClient) Add(ctx context.Context, name string, raw []byte, o AddOpti
 	err := q.c.Add(ctx, name, raw, qbit.AddOptions{SavePath: o.SavePath, Category: o.Category, Tags: o.Tag, Stopped: true, NoSubfolder: o.NoRoot})
 	if errors.Is(err, qbit.ErrAlreadyThere) {
 		return ErrAlreadyThere
+	}
+	if err == nil {
+		q.justAdded()
 	}
 	return err
 }
@@ -122,9 +165,11 @@ func SamePath(a, b string) bool {
 	return na == nb
 }
 
-func (q *qbitClient) Recheck(ctx context.Context, h string) error { return q.c.Recheck(ctx, h) }
-func (q *qbitClient) Start(ctx context.Context, h string) error   { return q.c.Start(ctx, h) }
-func (q *qbitClient) Stop(ctx context.Context, h string) error    { return q.c.Stop(ctx, h) }
+// Ces appels ne répondent pas d'erreur pour une empreinte inconnue : on donne
+// d'emblée l'identifiant du client (voir qbit_hybrid.go).
+func (q *qbitClient) Recheck(ctx context.Context, h string) error { return q.c.Recheck(ctx, q.idOf(h)) }
+func (q *qbitClient) Start(ctx context.Context, h string) error   { return q.c.Start(ctx, q.idOf(h)) }
+func (q *qbitClient) Stop(ctx context.Context, h string) error    { return q.c.Stop(ctx, q.idOf(h)) }
 func (q *qbitClient) RemoveKeepFiles(ctx context.Context, h string) error {
-	return q.c.RemoveKeepFiles(ctx, h)
+	return q.c.RemoveKeepFiles(ctx, q.idOf(h))
 }

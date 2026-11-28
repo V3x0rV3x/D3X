@@ -110,6 +110,10 @@ type fakeQbit struct {
 	// (par info-hash) auxquelles le client ne répond pas encore (qBittorrent
 	// sur NAS occupé, YataReborn 28/11/26).
 	slowFiles map[string]int
+	// hybrid : .torrent hybrides v1+v2 (empreinte v1 → identifiant du client).
+	// Comme qBittorrent avec libtorrent 2, le torrent ajouté est rangé sous cet
+	// identifiant (la v2 tronquée) et n'est trouvé que par lui.
+	hybrid map[string]string
 }
 
 func (f *fakeQbit) namesOf(h string, raw []byte) map[int]string {
@@ -217,12 +221,16 @@ func (f *fakeQbit) handler(t *testing.T) http.Handler {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		h := strings.ToLower(p.InfoHash)
+		v1 := strings.ToLower(p.InfoHash)
+		h := v1
+		if id := f.hybrid[v1]; id != "" {
+			h = id
+		}
 		if f.list[h] != nil {
 			io.WriteString(w, "Fails.")
 			return
 		}
-		f.list[h] = &fakeTorrent{Torrent: qbit.Torrent{Hash: h, Name: p.Name, SavePath: fields["savepath"], ContentPath: fields["savepath"] + "/" + p.Name, State: "stoppedDL", TotalSize: p.Total, Size: p.Total}, raw: raw, after: f.complete[h]}
+		f.list[h] = &fakeTorrent{Torrent: qbit.Torrent{Hash: h, InfoHashV1: v1, Name: p.Name, SavePath: fields["savepath"], ContentPath: fields["savepath"] + "/" + p.Name, State: "stoppedDL", TotalSize: p.Total, Size: p.Total}, raw: raw, after: f.complete[v1]}
 		// « Ne pas créer de sous-dossier » : chaque chemin perd sa racine.
 		if fields["contentLayout"] == "NoSubfolder" {
 			if f.names == nil {
