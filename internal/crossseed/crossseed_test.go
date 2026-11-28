@@ -106,6 +106,10 @@ type fakeQbit struct {
 	// failAdd : le client refuse tout ajout (disque plein, droits) : l'ajout
 	// échoue sans que le torrent entre dans la liste.
 	failAdd bool
+	// slowFiles : nombre de demandes de la liste des fichiers d'un torrent
+	// (par info-hash) auxquelles le client ne répond pas encore (qBittorrent
+	// sur NAS occupé, YataReborn 28/11/26).
+	slowFiles map[string]int
 }
 
 func (f *fakeQbit) namesOf(h string, raw []byte) map[int]string {
@@ -278,6 +282,11 @@ func (f *fakeQbit) handler(t *testing.T) http.Handler {
 		ft := f.list[h]
 		if ft == nil {
 			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if f.slowFiles[h] > 0 {
+			f.slowFiles[h]--
+			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
 		p, _ := torrent.Parse(ft.raw)

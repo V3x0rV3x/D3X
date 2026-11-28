@@ -675,14 +675,10 @@ func (e *Engine) AddAndVerify(ctx context.Context, tg Target, cfg *config.Config
 		}
 		return "", err
 	}
-	found := false
-	for i := 0; i < 30 && !found; i++ {
-		if lst, err := q.List(ctx, []string{hash}); err == nil && len(lst) > 0 {
-			found = true
-			break
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
+	found := waitClient(ctx, func() bool {
+		lst, err := q.List(ctx, []string{hash})
+		return err == nil && len(lst) > 0
+	})
 	if !found {
 		return hash, errors.New("le client n'a pas confirmé l'ajout")
 	}

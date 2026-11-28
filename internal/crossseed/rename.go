@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 	"unicode"
 
 	"github.com/V3x0rV3x/D3X/internal/client"
@@ -485,21 +484,22 @@ func (e *Engine) addAndRename(ctx context.Context, tg Target, cfg *config.Config
 		return "", 0, err
 	}
 	undo := func(err error) (string, int, error) {
-		_ = q.RemoveKeepFiles(context.Background(), hash)
+		removeAdded(q, hash)
 		return "", 0, err
 	}
 	// Le client voit-il les mêmes noms d'origine, aux mêmes rangs ?
 	var got map[int]string
-	for i := 0; i < 30; i++ {
-		if files, _, err := q.Files(ctx, hash); err == nil && len(files) > 0 {
-			got = map[int]string{}
-			for _, f := range files {
-				got[f.Index] = f.Path
-			}
-			break
+	waitClient(ctx, func() bool {
+		files, _, err := q.Files(ctx, hash)
+		if err != nil || len(files) == 0 {
+			return false
 		}
-		time.Sleep(500 * time.Millisecond)
-	}
+		got = map[int]string{}
+		for _, f := range files {
+			got[f.Index] = f.Path
+		}
+		return true
+	})
 	if got == nil {
 		return undo(errors.New("le client n'a pas confirmé l'ajout"))
 	}
@@ -527,26 +527,22 @@ func (e *Engine) addAndRename(ctx context.Context, tg Target, cfg *config.Config
 		return undo(err)
 	}
 	// Renommages faits ? (certains clients les appliquent en différé)
-	ok := false
-	for i := 0; i < 40 && !ok; i++ {
+	ok := waitClient(ctx, func() bool {
 		files, _, err := q.Files(ctx, hash)
-		if err == nil {
-			now := map[int]string{}
-			for _, f := range files {
-				now[f.Index] = f.Path
-			}
-			ok = true
-			for _, p := range pairs {
-				if now[p.Index] != p.To {
-					ok = false
-					break
-				}
+		if err != nil {
+			return false
+		}
+		now := map[int]string{}
+		for _, f := range files {
+			now[f.Index] = f.Path
+		}
+		for _, p := range pairs {
+			if now[p.Index] != p.To {
+				return false
 			}
 		}
-		if !ok {
-			time.Sleep(500 * time.Millisecond)
-		}
-	}
+		return true
+	})
 	if !ok {
 		return undo(errors.New("le client n'a pas appliqué les nouveaux noms : ajout annulé"))
 	}
